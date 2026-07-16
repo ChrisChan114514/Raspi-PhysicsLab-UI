@@ -1,0 +1,419 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import pygame
+
+from .analysis import FFTResult, analyze_fft
+from .state import CONTROL_ITEMS, DeviceState
+
+
+BG = (13, 17, 20)
+PANEL = (27, 33, 38)
+PANEL_ACTIVE = (35, 47, 51)
+PANEL_DARK = (18, 23, 27)
+TEXT = (239, 243, 245)
+MUTED = (157, 168, 175)
+ACCENT = (54, 184, 139)
+ACCENT_DARK = (26, 92, 74)
+WARN = (238, 174, 71)
+GRID = (59, 68, 74)
+CURVE = (100, 190, 235)
+FFT_CURVE = (238, 174, 71)
+
+CONTROL_LABELS = {
+    "lamp": "灯组转轮",
+    "intensity": "照明光强",
+    "measurement": "测量状态",
+}
+
+KEY_GUIDES = (
+    ("1", "FFT"),
+    ("2", "上选"),
+    ("8", "下选"),
+    ("4", "减小"),
+    ("6", "增大"),
+    ("A", "启停"),
+    ("B", "光强+"),
+    ("C", "光强-"),
+    ("D", "清空"),
+    ("#", "暂停"),
+    ("*", "退出"),
+)
+
+class MixedFont:
+    def __init__(
+        self,
+        chinese_path: Path,
+        latin_path: Path,
+        size: int,
+        bold: bool = False,
+    ) -> None:
+        self.chinese = pygame.font.Font(str(chinese_path), size)
+        self.latin = pygame.font.Font(str(latin_path), size)
+        self.chinese.set_bold(bold)
+        self.latin.set_bold(bold)
+        self.line_height = max(self.chinese.get_linesize(), self.latin.get_linesize())
+        self.baseline = max(self.chinese.get_ascent(), self.latin.get_ascent())
+
+    def _font_for(self, character: str) -> pygame.font.Font:
+        return self.latin if character.isascii() else self.chinese
+
+    def _runs(self, text: str) -> list[tuple[pygame.font.Font, str]]:
+        if not text:
+            return []
+        runs: list[tuple[pygame.font.Font, str]] = []
+        current_font = self._font_for(text[0])
+        current_text = text[0]
+        for character in text[1:]:
+            font = self._font_for(character)
+            if font is current_font:
+                current_text += character
+            else:
+                runs.append((current_font, current_text))
+                current_font = font
+                current_text = character
+        runs.append((current_font, current_text))
+        return runs
+
+    def size(self, text: str) -> tuple[int, int]:
+        width = sum(font.size(run)[0] for font, run in self._runs(text))
+        return width, self.line_height
+
+    def render(
+        self,
+        text: str,
+        antialias: bool,
+        color: tuple[int, int, int],
+    ) -> pygame.Surface:
+        runs = self._runs(text)
+        width = sum(font.size(run)[0] for font, run in runs)
+        surface = pygame.Surface((max(1, width), self.line_height), pygame.SRCALPHA)
+        x = 0
+        for font, run in runs:
+            rendered = font.render(run, antialias, color)
+            y = max(0, self.baseline - font.get_ascent())
+            surface.blit(rendered, (x, y))
+            x += font.size(run)[0]
+        return surface
+
+
+class MainView:
+    def __init__(self, screen: pygame.Surface, font_dir: Path) -> None:
+        self.screen = screen
+        pygame.font.init()
+        chinese_path = font_dir / "SimHei.ttf"
+        latin_path = font_dir / "Times New Roman.ttf"
+        missing = [str(path) for path in (chinese_path, latin_path) if not path.is_file()]
+        if missing:
+            raise FileNotFoundError("缺少 UI 字体文件：" + ", ".join(missing))
+        print(f"[UI] Chinese font={chinese_path}", flush=True)
+        print(f"[UI] Latin font={latin_path}", flush=True)
+        self.font_title = self._make_font(chinese_path, latin_path, 30, bold=True)
+        self.font_value = self._make_font(chinese_path, latin_path, 28, bold=True)
+        self.font_heading = self._make_font(chinese_path, latin_path, 22, bold=True)
+        self.font_body = self._make_font(chinese_path, latin_path, 18)
+        self.font_small = self._make_font(chinese_path, latin_path, 15)
+        self.font_key = self._make_font(chinese_path, latin_path, 17, bold=True)
+
+    @staticmethod
+    def _make_font(
+        chinese_path: Path,
+        latin_path: Path,
+        size: int,
+        bold: bool = False,
+    ) -> MixedFont:
+        return MixedFont(chinese_path, latin_path, size, bold)
+
+    def draw(self, state: DeviceState) -> None:
+        self.screen.fill(BG)
+        width, height = self.screen.get_size()
+        margin = 16
+        header_h = 64
+        footer_h = 64
+        gap = 12
+        header = pygame.Rect(margin, 14, width - margin * 2, header_h)
+        footer = pygame.Rect(margin, height - footer_h - margin, width - margin * 2, footer_h)
+        content_y = header.bottom + gap
+        content_h = footer.top - gap - content_y
+        left_w = 304
+        controls = pygame.Rect(margin, content_y, left_w, content_h)
+        chart = pygame.Rect(controls.right + 14, content_y, width - controls.right - 30, content_h)
+
+        self._draw_header(header, state)
+        self._draw_controls(controls, state)
+        self._draw_chart(chart, state)
+        self._draw_key_guide(footer, state.last_key)
+        pygame.display.flip()
+
+    def _draw_header(self, rect: pygame.Rect, state: DeviceState) -> None:
+        pygame.draw.rect(self.screen, PANEL, rect, border_radius=6)
+        pygame.draw.rect(self.screen, ACCENT, (rect.x, rect.y, 6, rect.height), border_radius=3)
+        self._text("不同材料光电流测量", self.font_title, TEXT, rect.x + 22, rect.y + 13)
+
+        status_color = ACCENT if state.measuring else WARN
+        pygame.draw.circle(self.screen, status_color, (rect.right - 346, rect.centery), 6)
+        self._text(
+            state.status,
+            self.font_body,
+            TEXT,
+            rect.right - 330,
+            rect.y + 20,
+            max_width=180,
+        )
+
+        self._text("最近按键", self.font_small, MUTED, rect.right - 138, rect.y + 23)
+        key_rect = pygame.Rect(rect.right - 58, rect.y + 14, 38, 38)
+        pygame.draw.rect(self.screen, PANEL_DARK, key_rect, border_radius=5)
+        pygame.draw.rect(self.screen, ACCENT_DARK, key_rect, width=2, border_radius=5)
+        self._center_text(state.last_key or "-", self.font_key, TEXT, key_rect)
+
+    def _draw_controls(self, rect: pygame.Rect, state: DeviceState) -> None:
+        pygame.draw.rect(self.screen, PANEL, rect, border_radius=6)
+        self._text("实验参数", self.font_heading, TEXT, rect.x + 16, rect.y + 13)
+        self._text("2 / 8 选择", self.font_small, MUTED, rect.right - 96, rect.y + 18)
+
+        values = {
+            "lamp": f"{state.lamp_name}  {state.motor_target_deg:.0f}°",
+            "intensity": f"{state.intensity_percent}%",
+            "measurement": "测量中" if state.measuring else "已暂停",
+        }
+        item_y = rect.y + 50
+        for key in CONTROL_ITEMS:
+            active = state.selected_name == key
+            item_rect = pygame.Rect(rect.x + 12, item_y, rect.width - 24, 72)
+            pygame.draw.rect(
+                self.screen,
+                PANEL_ACTIVE if active else PANEL_DARK,
+                item_rect,
+                border_radius=5,
+            )
+            if active:
+                pygame.draw.rect(self.screen, ACCENT, item_rect, width=2, border_radius=5)
+                pygame.draw.rect(
+                    self.screen,
+                    ACCENT,
+                    (item_rect.x, item_rect.y + 10, 4, item_rect.height - 20),
+                    border_radius=2,
+                )
+            label = CONTROL_LABELS[key]
+            if key == "lamp":
+                if state.motor_moving:
+                    label += " · 转动中"
+                elif state.motor_ready:
+                    label += " · 已到位"
+                else:
+                    label += " · 待定位"
+            self._text(label, self.font_small, MUTED, item_rect.x + 14, item_rect.y + 9)
+            if key == "lamp" and not state.motor_ready:
+                value_color = WARN
+            else:
+                value_color = ACCENT if key == "measurement" and state.measuring else TEXT
+            self._text(values[key], self.font_heading, value_color, item_rect.x + 14, item_rect.y + 34)
+
+            if key == "intensity":
+                bar = pygame.Rect(item_rect.right - 92, item_rect.y + 43, 72, 7)
+                pygame.draw.rect(self.screen, GRID, bar, border_radius=3)
+                fill = bar.copy()
+                fill.width = round(bar.width * state.intensity_percent / 100)
+                if fill.width:
+                    pygame.draw.rect(self.screen, WARN, fill, border_radius=3)
+            item_y += 80
+
+        camera_rect = pygame.Rect(rect.x + 12, item_y + 2, rect.width - 24, 50)
+        pygame.draw.rect(self.screen, PANEL_DARK, camera_rect, border_radius=5)
+        self._text("红外监控", self.font_small, MUTED, camera_rect.x + 14, camera_rect.y + 15)
+        camera_text = "已就绪" if state.camera_ready else "待接入"
+        camera_color = ACCENT if state.camera_ready else WARN
+        self._text(camera_text, self.font_body, camera_color, camera_rect.right - 78, camera_rect.y + 13)
+
+        self._text("4 / 6 调整当前参数", self.font_small, MUTED, rect.x + 16, rect.bottom - 27)
+
+    def _draw_chart(self, rect: pygame.Rect, state: DeviceState) -> None:
+        pygame.draw.rect(self.screen, PANEL, rect, border_radius=6)
+        self._text("光电流实时曲线（IN0）", self.font_heading, TEXT, rect.x + 16, rect.y + 13)
+        latest = state.samples[-1].voltage_mv if state.samples else 0.0
+        value_surface = self.font_value.render(f"{latest:0.3f} mV", True, ACCENT)
+        self.screen.blit(value_surface, (rect.right - value_surface.get_width() - 18, rect.y + 10))
+
+        samples = state.samples[-240:]
+        if state.fft_visible:
+            time_plot = pygame.Rect(rect.x + 20, rect.y + 61, rect.width - 40, 112)
+            self._draw_time_plot(time_plot, samples, label="时域")
+            fft_result = analyze_fft(
+                [sample.timestamp_s for sample in state.samples],
+                [sample.voltage_mv for sample in state.samples],
+            )
+            info_y = time_plot.bottom + 21
+            if fft_result is None:
+                self._text("FFT：等待至少16个有效采样点", self.font_small, WARN, rect.x + 20, info_y)
+            else:
+                self._text(
+                    f"FFT主频：{fft_result.center_frequency_hz:.3f} Hz  "
+                    f"范围：{fft_result.range_min_hz:.3f}-{fft_result.range_max_hz:.3f} Hz  "
+                    f"时长：{fft_result.duration_s:.1f} s",
+                    self.font_small,
+                    WARN,
+                    rect.x + 20,
+                    info_y,
+                    max_width=rect.width - 40,
+                )
+            fft_plot = pygame.Rect(rect.x + 20, rect.y + 222, rect.width - 40, 130)
+            self._draw_fft_plot(fft_plot, fft_result)
+        else:
+            plot = pygame.Rect(rect.x + 20, rect.y + 60, rect.width - 40, rect.height - 122)
+            self._draw_time_plot(plot, samples)
+
+        elapsed = samples[-1].timestamp_s if samples else 0.0
+        self._text(
+            f"采样点：{len(state.samples)}  已滤尖峰：{state.rejected_spikes}",
+            self.font_small,
+            MUTED,
+            rect.x + 20,
+            rect.bottom - 22,
+        )
+        elapsed_surface = self.font_small.render(f"测量时间：{elapsed:0.1f} 秒", True, MUTED)
+        self.screen.blit(elapsed_surface, (rect.right - elapsed_surface.get_width() - 20, rect.bottom - 22))
+
+    def _draw_plot_grid(self, plot: pygame.Rect) -> None:
+        pygame.draw.rect(self.screen, PANEL_DARK, plot, border_radius=4)
+        for index in range(1, 5):
+            y = plot.y + index * plot.height // 5
+            pygame.draw.line(self.screen, GRID, (plot.x, y), (plot.right, y), 1)
+        for index in range(1, 6):
+            x = plot.x + index * plot.width // 6
+            pygame.draw.line(self.screen, GRID, (x, plot.y), (x, plot.bottom), 1)
+
+    def _draw_time_plot(
+        self,
+        plot: pygame.Rect,
+        samples: list,
+        label: str = "",
+    ) -> None:
+        self._draw_plot_grid(plot)
+        if label:
+            self._plot_label(label, plot.right - 45, plot.y + 6)
+        if len(samples) >= 2:
+            values = [sample.voltage_mv for sample in samples]
+            min_v = min(values)
+            max_v = max(values)
+            span = max(max_v - min_v, 1.0)
+            lower = min_v - span * 0.08
+            upper = max_v + span * 0.08
+            scale = upper - lower
+            start_time = samples[0].timestamp_s
+            end_time = samples[-1].timestamp_s
+            time_span = max(end_time - start_time, 0.001)
+            points: list[tuple[int, int]] = []
+            for sample in samples:
+                x = plot.x + int((sample.timestamp_s - start_time) * (plot.width - 1) / time_span)
+                y = plot.bottom - 1 - int((sample.voltage_mv - lower) * (plot.height - 2) / scale)
+                points.append((x, y))
+            pygame.draw.lines(self.screen, CURVE, False, points, 2)
+            self._plot_label(f"{upper:0.1f}", plot.x + 7, plot.y + 6)
+            self._plot_label(f"{lower:0.1f}", plot.x + 7, plot.bottom - 23)
+            self._draw_x_axis_labels(plot, start_time, end_time, "s")
+        else:
+            message = "按 A 键开始测量"
+            surface = self.font_heading.render(message, True, MUTED)
+            self.screen.blit(surface, surface.get_rect(center=plot.center))
+
+    def _draw_fft_plot(self, plot: pygame.Rect, result: FFTResult | None) -> None:
+        self._draw_plot_grid(plot)
+        self._plot_label("FFT频谱", plot.right - 78, plot.y + 6)
+        if result is None or len(result.frequencies_hz) < 2:
+            message = "采样中..."
+            surface = self.font_body.render(message, True, MUTED)
+            self.screen.blit(surface, surface.get_rect(center=plot.center))
+            return
+
+        frequencies = result.frequencies_hz
+        amplitudes = result.amplitudes_mv
+        minimum_hz = result.range_min_hz
+        maximum_hz = result.range_max_hz
+        frequency_span = max(maximum_hz - minimum_hz, 1e-9)
+        maximum_amplitude = max(float(max(amplitudes)), 1e-9)
+        points = []
+        for frequency, amplitude in zip(frequencies, amplitudes):
+            x = plot.x + int((float(frequency) - minimum_hz) * (plot.width - 1) / frequency_span)
+            y = plot.bottom - 1 - int(float(amplitude) * (plot.height - 2) / maximum_amplitude)
+            points.append((x, y))
+        if len(points) >= 2:
+            pygame.draw.lines(self.screen, FFT_CURVE, False, points, 2)
+        self._plot_label(f"{maximum_amplitude:.2f} mV", plot.x + 7, plot.y + 6)
+        self._draw_x_axis_labels(plot, minimum_hz, maximum_hz, "Hz")
+
+    def _draw_x_axis_labels(
+        self,
+        plot: pygame.Rect,
+        minimum: float,
+        maximum: float,
+        unit: str,
+    ) -> None:
+        middle = (minimum + maximum) / 2.0
+        labels = (
+            (f"{minimum:.1f} {unit}", plot.x),
+            (f"{middle:.1f} {unit}", plot.centerx),
+            (f"{maximum:.1f} {unit}", plot.right),
+        )
+        for index, (text, anchor_x) in enumerate(labels):
+            surface = self.font_small.render(text, True, MUTED)
+            if index == 0:
+                x = anchor_x
+            elif index == 1:
+                x = anchor_x - surface.get_width() // 2
+            else:
+                x = anchor_x - surface.get_width()
+            self.screen.blit(surface, (x, plot.bottom + 2))
+
+    def _draw_key_guide(self, rect: pygame.Rect, active_key: str) -> None:
+        pygame.draw.rect(self.screen, PANEL, rect, border_radius=6)
+        inner = rect.inflate(-12, -12)
+        gap = 6
+        item_w = (inner.width - gap * (len(KEY_GUIDES) - 1)) // len(KEY_GUIDES)
+        x = inner.x
+        for key, label in KEY_GUIDES:
+            item = pygame.Rect(x, inner.y, item_w, inner.height)
+            active = key == active_key
+            pygame.draw.rect(self.screen, PANEL_ACTIVE if active else PANEL_DARK, item, border_radius=5)
+            if active:
+                pygame.draw.rect(self.screen, ACCENT, item, width=2, border_radius=5)
+            key_rect = pygame.Rect(item.x + 6, item.y + 6, 28, 28)
+            pygame.draw.rect(self.screen, ACCENT_DARK if active else GRID, key_rect, border_radius=4)
+            self._center_text(key, self.font_key, TEXT, key_rect)
+            self._text(label, self.font_small, TEXT if active else MUTED, item.x + 39, item.y + 12)
+            x += item_w + gap
+
+    def _plot_label(self, text: str, x: int, y: int) -> None:
+        surface = self.font_small.render(text, True, MUTED)
+        background = surface.get_rect(topleft=(x, y)).inflate(6, 2)
+        pygame.draw.rect(self.screen, PANEL_DARK, background)
+        self.screen.blit(surface, (x, y))
+
+    def _center_text(
+        self,
+        text: str,
+        font: MixedFont,
+        color: tuple[int, int, int],
+        rect: pygame.Rect,
+    ) -> None:
+        surface = font.render(text, True, color)
+        self.screen.blit(surface, surface.get_rect(center=rect.center))
+
+    def _text(
+        self,
+        text: str,
+        font: MixedFont,
+        color: tuple[int, int, int],
+        x: int,
+        y: int,
+        max_width: int | None = None,
+    ) -> None:
+        display_text = text
+        surface = font.render(display_text, True, color)
+        if max_width is not None and surface.get_width() > max_width:
+            suffix = "..."
+            while display_text and font.size(display_text + suffix)[0] > max_width:
+                display_text = display_text[:-1]
+            surface = font.render(display_text + suffix, True, color)
+        self.screen.blit(surface, (x, y))

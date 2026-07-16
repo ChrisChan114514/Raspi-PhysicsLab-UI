@@ -1,0 +1,17 @@
+[Unit]
+Description=Photoelectric Current Experiment UI (1024x600 fullscreen)
+After=graphical.target
+Wants=graphical.target
+
+[Service]
+User=cc
+WorkingDirectory=/home/cc/Desktop/UICode
+Environment=PYTHONUNBUFFERED=1
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/cc/.Xauthority
+ExecStart=/home/cc/Desktop/UICode/.venv/bin/python /home/cc/Desktop/UICode/UI/app.py --backend hardware
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=graphical.target
