@@ -10,11 +10,11 @@ class Button(str, Enum):
     SELECT_NEXT = "SELECT_NEXT"
     DECREASE = "DECREASE"
     INCREASE = "INCREASE"
-    TOGGLE_MEASUREMENT = "TOGGLE_MEASUREMENT"
+    CONFIRM = "CONFIRM"
     INTENSITY_UP = "INTENSITY_UP"
     INTENSITY_DOWN = "INTENSITY_DOWN"
     CLEAR_CURVE = "CLEAR_CURVE"
-    PAUSE_MEASUREMENT = "PAUSE_MEASUREMENT"
+    TOGGLE_MEASUREMENT = "TOGGLE_MEASUREMENT"
     TOGGLE_FFT = "TOGGLE_FFT"
     EXIT = "EXIT"
 
@@ -23,6 +23,8 @@ class Button(str, Enum):
 class ButtonReading:
     button: Button
     key: str = ""
+    keys: tuple[str, ...] = ()
+    conflict: bool = False
 
 
 @dataclass(frozen=True)

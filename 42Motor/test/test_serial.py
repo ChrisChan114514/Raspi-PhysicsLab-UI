@@ -11,12 +11,11 @@ from typing import List, Optional, Tuple
 
 try:
     import serial
-    from serial.tools import list_ports
 except ModuleNotFoundError:
     serial = None
-    list_ports = None
 
 
+RASPI_GPIO_SERIAL_PORT = "/dev/serial0"
 MOTOR_ADDRESS = 0x01
 BAUD_RATE = 115200
 VERSION_FUNCTION = 0x1F
@@ -48,7 +47,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--port",
         default=None,
-        help="Serial port override. Default: automatically select CH340.",
+        help="Serial port override. Default: Raspberry Pi GPIO UART /dev/serial0.",
     )
     parser.add_argument(
         "--timeout",
@@ -69,48 +68,13 @@ def hex_bytes(data: bytes) -> str:
     return data.hex(" ").upper() if data else "<no data>"
 
 
-def port_description(port_info) -> str:
-    fields = (
-        port_info.device,
-        port_info.description,
-        port_info.manufacturer,
-        port_info.hwid,
-    )
-    return " | ".join(str(value) for value in fields if value)
-
-
-def available_port_descriptions() -> Tuple[str, ...]:
-    return tuple(port_description(port_info) for port_info in list_ports.comports())
-
-
-def find_ch340_port() -> Tuple[str, str, Tuple[str, ...]]:
-    matches = []
-    for port_info in list_ports.comports():
-        description = port_description(port_info)
-        if "CH340" in description.upper():
-            matches.append(port_info)
-
-    if not matches:
-        raise LookupError("no active serial device containing CH340 was found")
-
-    matches.sort(key=lambda port_info: port_info.device)
-    selected = matches[0]
-    other_matches = tuple(port_description(port_info) for port_info in matches[1:])
-    return selected.device, port_description(selected), other_matches
-
-
 def resolve_port(requested_port: Optional[str]) -> str:
     if requested_port:
         print(f"Using requested serial port: {requested_port}")
         return requested_port
 
-    selected_port, selected_description, other_matches = find_ch340_port()
-    print(f"Auto-selected CH340 serial port: {selected_description}")
-    if other_matches:
-        print("Other active CH340 ports were not selected:")
-        for description in other_matches:
-            print(f"  {description}")
-    return selected_port
+    print(f"Using Raspberry Pi GPIO UART: {RASPI_GPIO_SERIAL_PORT}")
+    return RASPI_GPIO_SERIAL_PORT
 
 
 def read_until_idle(port: "serial.Serial", timeout_s: float) -> bytes:
@@ -242,18 +206,7 @@ def main() -> int:
         )
         return 2
 
-    try:
-        args.port = resolve_port(args.port)
-    except LookupError as exc:
-        print(f"ERROR: {exc}.", file=sys.stderr)
-        detected_ports = available_port_descriptions()
-        if detected_ports:
-            print("Detected serial devices:", file=sys.stderr)
-            for description in detected_ports:
-                print(f"  {description}", file=sys.stderr)
-        else:
-            print("No serial devices are currently detected.", file=sys.stderr)
-        return 2
+    args.port = resolve_port(args.port)
 
     print()
     print("EMM V5.0 serial version handshake")

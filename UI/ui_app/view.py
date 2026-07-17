@@ -5,7 +5,7 @@ from pathlib import Path
 import pygame
 
 from .analysis import FFTResult, analyze_fft
-from .state import CONTROL_ITEMS, DeviceState
+from .state import CONTROL_ITEMS, LAMP_NAMES, DeviceState
 
 
 BG = (13, 17, 20)
@@ -31,13 +31,13 @@ KEY_GUIDES = (
     ("1", "FFT"),
     ("2", "上选"),
     ("8", "下选"),
-    ("4", "减小"),
-    ("6", "增大"),
-    ("A", "启停"),
+    ("4", "左/减"),
+    ("6", "右/增"),
+    ("A", "确认"),
     ("B", "光强+"),
     ("C", "光强-"),
     ("D", "清空"),
-    ("#", "暂停"),
+    ("#", "启停"),
     ("*", "退出"),
 )
 
@@ -174,14 +174,14 @@ class MainView:
         self._text("2 / 8 选择", self.font_small, MUTED, rect.right - 96, rect.y + 18)
 
         values = {
-            "lamp": f"{state.lamp_name}  {state.motor_target_deg:.0f}°",
             "intensity": f"{state.intensity_percent}%",
             "measurement": "测量中" if state.measuring else "已暂停",
         }
         item_y = rect.y + 50
         for key in CONTROL_ITEMS:
             active = state.selected_name == key
-            item_rect = pygame.Rect(rect.x + 12, item_y, rect.width - 24, 72)
+            item_h = 118 if key == "lamp" else 72
+            item_rect = pygame.Rect(rect.x + 12, item_y, rect.width - 24, item_h)
             pygame.draw.rect(
                 self.screen,
                 PANEL_ACTIVE if active else PANEL_DARK,
@@ -204,12 +204,15 @@ class MainView:
                     label += " · 已到位"
                 else:
                     label += " · 待定位"
+            elif key == "intensity":
+                label += " · UV亮" if state.light_on else " · UV灭"
             self._text(label, self.font_small, MUTED, item_rect.x + 14, item_rect.y + 9)
-            if key == "lamp" and not state.motor_ready:
-                value_color = WARN
+
+            if key == "lamp":
+                self._draw_lamp_selector(item_rect, state, active)
             else:
                 value_color = ACCENT if key == "measurement" and state.measuring else TEXT
-            self._text(values[key], self.font_heading, value_color, item_rect.x + 14, item_rect.y + 34)
+                self._text(values[key], self.font_heading, value_color, item_rect.x + 14, item_rect.y + 34)
 
             if key == "intensity":
                 bar = pygame.Rect(item_rect.right - 92, item_rect.y + 43, 72, 7)
@@ -218,7 +221,7 @@ class MainView:
                 fill.width = round(bar.width * state.intensity_percent / 100)
                 if fill.width:
                     pygame.draw.rect(self.screen, WARN, fill, border_radius=3)
-            item_y += 80
+            item_y = item_rect.bottom + 8
 
         camera_rect = pygame.Rect(rect.x + 12, item_y + 2, rect.width - 24, 50)
         pygame.draw.rect(self.screen, PANEL_DARK, camera_rect, border_radius=5)
@@ -227,7 +230,114 @@ class MainView:
         camera_color = ACCENT if state.camera_ready else WARN
         self._text(camera_text, self.font_body, camera_color, camera_rect.right - 78, camera_rect.y + 13)
 
-        self._text("4 / 6 调整当前参数", self.font_small, MUTED, rect.x + 16, rect.bottom - 27)
+        if state.selected_name == "lamp":
+            control_hint = "4 / 6 选择方向，A 确认"
+        elif state.selected_name == "intensity":
+            control_hint = "4 / 6 调整光强"
+        else:
+            control_hint = "# 开始 / 暂停测量"
+        self._text(
+            control_hint,
+            self.font_small,
+            MUTED,
+            rect.x + 16,
+            rect.bottom - 27,
+            max_width=rect.width - 32,
+        )
+
+    def _draw_lamp_selector(
+        self,
+        item_rect: pygame.Rect,
+        state: DeviceState,
+        active: bool,
+    ) -> None:
+        arrow_y = item_rect.y + 50
+        arrow_size = 42
+        left_rect = pygame.Rect(item_rect.x + 14, arrow_y, arrow_size, arrow_size)
+        right_rect = pygame.Rect(
+            item_rect.right - arrow_size - 14,
+            arrow_y,
+            arrow_size,
+            arrow_size,
+        )
+        center_rect = pygame.Rect(
+            left_rect.right + 8,
+            item_rect.y + 35,
+            right_rect.x - left_rect.right - 16,
+            56,
+        )
+        left_focused = active and state.lamp_arrow_focus < 0
+        right_focused = active and state.lamp_arrow_focus > 0
+        self._draw_arrow_button(left_rect, -1, left_focused)
+        self._draw_arrow_button(right_rect, 1, right_focused)
+
+        value_color = WARN if not state.motor_ready else TEXT
+        self._center_text(
+            state.lamp_name,
+            self.font_heading,
+            value_color,
+            pygame.Rect(center_rect.x, center_rect.y - 5, center_rect.width, 28),
+        )
+        self._center_text(
+            f"{state.motor_target_deg:.2f}°",
+            self.font_heading,
+            value_color,
+            pygame.Rect(center_rect.x, center_rect.y + 21, center_rect.width, 28),
+        )
+        self._center_text(
+            f"当前：{LAMP_NAMES[state.active_lamp_index]}",
+            self.font_small,
+            MUTED,
+            pygame.Rect(center_rect.x, center_rect.bottom - 4, center_rect.width, 20),
+        )
+
+        left_label_rect = pygame.Rect(left_rect.x - 9, left_rect.bottom + 4, 60, 18)
+        right_label_rect = pygame.Rect(right_rect.x - 9, right_rect.bottom + 4, 60, 18)
+        self._center_text(
+            LAMP_NAMES[(state.lamp_index - 1) % len(LAMP_NAMES)],
+            self.font_small,
+            MUTED,
+            left_label_rect,
+        )
+        self._center_text(
+            LAMP_NAMES[(state.lamp_index + 1) % len(LAMP_NAMES)],
+            self.font_small,
+            MUTED,
+            right_label_rect,
+        )
+
+    def _draw_arrow_button(
+        self,
+        rect: pygame.Rect,
+        direction: int,
+        focused: bool,
+    ) -> None:
+        pygame.draw.rect(
+            self.screen,
+            ACCENT_DARK if focused else PANEL,
+            rect,
+            border_radius=5,
+        )
+        pygame.draw.rect(
+            self.screen,
+            ACCENT if focused else GRID,
+            rect,
+            width=2,
+            border_radius=5,
+        )
+        if direction < 0:
+            points = (
+                (rect.centerx - 8, rect.centery),
+                (rect.centerx + 7, rect.centery - 11),
+                (rect.centerx + 7, rect.centery + 11),
+            )
+        else:
+            points = (
+                (rect.centerx + 8, rect.centery),
+                (rect.centerx - 7, rect.centery - 11),
+                (rect.centerx - 7, rect.centery + 11),
+            )
+        pygame.draw.polygon(self.screen, TEXT if focused else MUTED, points)
 
     def _draw_chart(self, rect: pygame.Rect, state: DeviceState) -> None:
         pygame.draw.rect(self.screen, PANEL, rect, border_radius=6)
@@ -239,7 +349,12 @@ class MainView:
         samples = state.samples[-240:]
         if state.fft_visible:
             time_plot = pygame.Rect(rect.x + 20, rect.y + 61, rect.width - 40, 112)
-            self._draw_time_plot(time_plot, samples, label="时域")
+            self._draw_time_plot(
+                time_plot,
+                samples,
+                state.measuring,
+                label="时域",
+            )
             fft_result = analyze_fft(
                 [sample.timestamp_s for sample in state.samples],
                 [sample.voltage_mv for sample in state.samples],
@@ -262,7 +377,7 @@ class MainView:
             self._draw_fft_plot(fft_plot, fft_result)
         else:
             plot = pygame.Rect(rect.x + 20, rect.y + 60, rect.width - 40, rect.height - 122)
-            self._draw_time_plot(plot, samples)
+            self._draw_time_plot(plot, samples, state.measuring)
 
         elapsed = samples[-1].timestamp_s if samples else 0.0
         self._text(
@@ -288,6 +403,7 @@ class MainView:
         self,
         plot: pygame.Rect,
         samples: list,
+        measuring: bool,
         label: str = "",
     ) -> None:
         self._draw_plot_grid(plot)
@@ -314,7 +430,7 @@ class MainView:
             self._plot_label(f"{lower:0.1f}", plot.x + 7, plot.bottom - 23)
             self._draw_x_axis_labels(plot, start_time, end_time, "s")
         else:
-            message = "按 A 键开始测量"
+            message = "等待首个采样点" if measuring else "按 # 开始测量"
             surface = self.font_heading.render(message, True, MUTED)
             self.screen.blit(surface, surface.get_rect(center=plot.center))
 

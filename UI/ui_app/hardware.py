@@ -17,11 +17,11 @@ MATRIX_KEY_TO_BUTTON = {
     "8": Button.SELECT_NEXT,
     "4": Button.DECREASE,
     "6": Button.INCREASE,
-    "A": Button.TOGGLE_MEASUREMENT,
+    "A": Button.CONFIRM,
     "B": Button.INTENSITY_UP,
     "C": Button.INTENSITY_DOWN,
     "D": Button.CLEAR_CURVE,
-    "#": Button.PAUSE_MEASUREMENT,
+    "#": Button.TOGGLE_MEASUREMENT,
     "1": Button.TOGGLE_FFT,
     "*": Button.EXIT,
 }
@@ -69,9 +69,17 @@ class MatrixKeypadButtonReader(ButtonReader):
 
     def poll(self) -> ButtonReading:
         self._scanner.poll()
-        for key in self._scanner.stable_keys:
+        keys = self._scanner.stable_keys
+        if len(keys) > 1:
+            return ButtonReading(
+                button=Button.NONE,
+                key="+".join(keys),
+                keys=keys,
+                conflict=True,
+            )
+        for key in keys:
             button = MATRIX_KEY_TO_BUTTON.get(key, Button.NONE)
-            return ButtonReading(button=button, key=key)
+            return ButtonReading(button=button, key=key, keys=(key,))
         return ButtonReading(Button.NONE)
 
     def close(self) -> None:
@@ -88,6 +96,10 @@ class StepperMoveResult:
 
 
 class StepperMotor(ABC):
+    @property
+    def lamp_angles_deg(self) -> tuple[float, ...]:
+        return (0.0, 60.0, 120.0, 180.0, 240.0, 300.0)
+
     @property
     def position_deg(self) -> float:
         return 0.0
@@ -108,12 +120,17 @@ class StepperMotor(ABC):
 
 
 class SimulatedStepperMotor(StepperMotor):
-    def __init__(self) -> None:
+    def __init__(self, lamp_angles_deg: tuple[float, ...]) -> None:
+        self._lamp_angles_deg = lamp_angles_deg
         self.position = 0
 
     @property
+    def lamp_angles_deg(self) -> tuple[float, ...]:
+        return self._lamp_angles_deg
+
+    @property
     def position_deg(self) -> float:
-        return float(self.position * 60)
+        return self._lamp_angles_deg[self.position]
 
     def select_lamp(
         self,
@@ -123,7 +140,7 @@ class SimulatedStepperMotor(StepperMotor):
         del cancel_event
         started = time.monotonic()
         self.position = lamp_index
-        angle = float(lamp_index * 60)
+        angle = self._lamp_angles_deg[lamp_index]
         return StepperMoveResult(
             lamp_index=lamp_index,
             target_angle_deg=angle,
@@ -157,13 +174,19 @@ class EMMV5StepperMotor(StepperMotor):
             debug=debug,
         )
         self._motor = EmmV5Motor(config)
+        self._lamp_angles_deg = self._motor.lamp_angles_deg
         version = self._motor.open()
         print(
             f"[MOTOR] port={self._motor.port_name} "
             f"version={version.firmware:02X}/{version.hardware:02X} "
+            f"lamp_offset={self._motor.parameters.lamp_angle_offset_deg:+.3f} deg "
             f"position={self._motor.last_position_deg:.3f} deg",
             flush=True,
         )
+
+    @property
+    def lamp_angles_deg(self) -> tuple[float, ...]:
+        return self._lamp_angles_deg
 
     @property
     def position_deg(self) -> float:
@@ -191,11 +214,78 @@ class EMMV5StepperMotor(StepperMotor):
 
 
 class LightController:
+    @property
+    def enabled(self) -> bool:
+        return False
+
+    def set_enabled(self, enabled: bool) -> None:
+        raise NotImplementedError
+
+    def set_intensity(self, percent: int) -> None:
+        raise NotImplementedError
+
+    def close(self) -> None:
+        return None
+
+
+class SimulatedLightController(LightController):
     def __init__(self) -> None:
         self.intensity_percent = 30
+        self._enabled = False
+
+    @property
+    def enabled(self) -> bool:
+        return self._enabled and self.intensity_percent > 0
+
+    def set_enabled(self, enabled: bool) -> None:
+        self._enabled = bool(enabled)
 
     def set_intensity(self, percent: int) -> None:
         self.intensity_percent = max(0, min(100, percent))
+
+    def close(self) -> None:
+        self._enabled = False
+
+
+class RaspberryPiPwmLightController(LightController):
+    def __init__(
+        self,
+        led_dir: Path,
+        frequency_hz: float = 1000.0,
+        active_high: bool = True,
+        initial_intensity_percent: int = 30,
+        debug: bool = False,
+    ) -> None:
+        driver_path = led_dir / "led_pwm.py"
+        if not driver_path.is_file():
+            raise FileNotFoundError(f"未找到紫外灯 PWM 驱动：{driver_path}")
+        sys.path.insert(0, str(led_dir))
+        from led_pwm import LedPwmConfig, PwmLed  # noqa: PLC0415
+
+        self.intensity_percent = max(0, min(100, initial_intensity_percent))
+        self._led = PwmLed(
+            LedPwmConfig(
+                frequency_hz=frequency_hz,
+                active_high=active_high,
+                initial_duty_percent=self.intensity_percent,
+                debug=debug,
+            )
+        )
+        self._led.open()
+
+    @property
+    def enabled(self) -> bool:
+        return self._led.enabled
+
+    def set_enabled(self, enabled: bool) -> None:
+        self._led.set_enabled(enabled)
+
+    def set_intensity(self, percent: int) -> None:
+        self.intensity_percent = max(0, min(100, percent))
+        self._led.set_duty_cycle(self.intensity_percent)
+
+    def close(self) -> None:
+        self._led.close()
 
 
 @dataclass(frozen=True)
@@ -302,20 +392,24 @@ class HardwareBundle:
         button_reader: ButtonReader,
         photocurrent_sensor: PhotocurrentSensor,
         stepper_motor: StepperMotor,
+        light_controller: LightController,
     ) -> None:
         self.buttons = button_reader
         self.photocurrent = photocurrent_sensor
         self.stepper = stepper_motor
-        self.light = LightController()
+        self.light = light_controller
 
     def close(self) -> None:
         try:
-            self.stepper.close()
+            self.light.close()
         finally:
             try:
-                self.photocurrent.close()
+                self.stepper.close()
             finally:
-                self.buttons.close()
+                try:
+                    self.photocurrent.close()
+                finally:
+                    self.buttons.close()
 
 
 def create_hardware(
@@ -323,17 +417,28 @@ def create_hardware(
     keypad_dir: Path,
     ads1256_dir: Path,
     motor_dir: Path,
+    led_dir: Path,
     motor_port: str | None = None,
     motor_speed_rpm: int = 60,
     motor_acceleration: int = 50,
     motor_pulses_per_revolution: int = 3200,
+    led_pwm_frequency_hz: float = 1000.0,
+    led_active_low: bool = False,
     debug_motor: bool = False,
+    debug_led: bool = False,
 ) -> HardwareBundle:
     if backend == "hardware":
         buttons = MatrixKeypadButtonReader(keypad_dir=keypad_dir)
+        light = None
         sensor = None
         stepper = None
         try:
+            light = RaspberryPiPwmLightController(
+                led_dir=led_dir,
+                frequency_hz=led_pwm_frequency_hz,
+                active_high=not led_active_low,
+                debug=debug_led,
+            )
             sensor = ADS1256PhotocurrentSensor(ads1256_dir=ads1256_dir)
             stepper = EMMV5StepperMotor(
                 motor_dir=motor_dir,
@@ -344,15 +449,22 @@ def create_hardware(
                 debug=debug_motor,
             )
         except Exception:
-            if stepper is not None:
-                stepper.close()
-            if sensor is not None:
-                sensor.close()
-            buttons.close()
+            for device in (light, stepper, sensor, buttons):
+                if device is None:
+                    continue
+                try:
+                    device.close()
+                except Exception as cleanup_error:
+                    print(f"[HARDWARE CLEANUP ERROR] {cleanup_error}", flush=True)
             raise
-        return HardwareBundle(buttons, sensor, stepper)
+        return HardwareBundle(buttons, sensor, stepper, light)
+    sys.path.insert(0, str(motor_dir))
+    from motor_config import load_motor_parameters  # noqa: PLC0415
+
+    motor_parameters = load_motor_parameters(motor_dir / "motor_config.json")
     return HardwareBundle(
         SimulatedButtonReader(),
         SimulatedPhotocurrentSensor(),
-        SimulatedStepperMotor(),
+        SimulatedStepperMotor(motor_parameters.lamp_angles_deg),
+        SimulatedLightController(),
     )

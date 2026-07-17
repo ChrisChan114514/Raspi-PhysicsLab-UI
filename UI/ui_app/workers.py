@@ -52,22 +52,38 @@ class ButtonPollerThread:
 
     def _run(self) -> None:
         last_button = Button.NONE
+        last_key = ""
+        last_conflict_keys: tuple[str, ...] = ()
         while not self._stop_event.is_set():
             started = time.monotonic()
             try:
                 reading = self.reader.poll()
                 self.messages.put(ButtonWorkerMessage(kind="reading", reading=reading))
 
-                is_press = reading.button not in IDLE_BUTTONS
-                was_idle = last_button in IDLE_BUTTONS
-                if is_press and was_idle:
-                    self.messages.put(
-                        ButtonWorkerMessage(
-                            kind="event",
-                            event=ButtonEvent(reading.button, reading.key),
+                if reading.conflict:
+                    if reading.keys != last_conflict_keys:
+                        self.messages.put(
+                            ButtonWorkerMessage(kind="conflict", reading=reading)
                         )
-                    )
-                last_button = reading.button
+                    last_button = Button.NONE
+                    last_key = ""
+                    last_conflict_keys = reading.keys
+                elif reading.button not in IDLE_BUTTONS:
+                    if reading.button != last_button or reading.key != last_key:
+                        self.messages.put(
+                            ButtonWorkerMessage(
+                                kind="event",
+                                event=ButtonEvent(reading.button, reading.key),
+                            )
+                        )
+                    last_button = reading.button
+                    last_key = reading.key
+                    last_conflict_keys = ()
+                else:
+                    if last_button not in IDLE_BUTTONS or last_key:
+                        last_button = Button.NONE
+                        last_key = ""
+                    last_conflict_keys = ()
             except Exception as exc:  # pragma: no cover - hardware path
                 self.messages.put(ButtonWorkerMessage(kind="error", error=str(exc)))
                 time.sleep(0.5)

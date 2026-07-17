@@ -34,9 +34,14 @@ def parse_args() -> argparse.Namespace:
         help="在终端打印 EMM 电机的串口收发帧",
     )
     parser.add_argument(
+        "--debug-led",
+        action="store_true",
+        help="在终端打印紫外灯 PWM 输出状态",
+    )
+    parser.add_argument(
         "--motor-port",
         default=None,
-        help="指定电机串口，例如 /dev/ttyUSB0；默认自动选择 CH340",
+        help="指定电机串口，例如 /dev/serial0；默认使用树莓派 GPIO UART /dev/serial0",
     )
     parser.add_argument(
         "--motor-speed",
@@ -56,6 +61,17 @@ def parse_args() -> argparse.Namespace:
         default=3200,
         help="电机每圈命令脉冲数，默认 3200（16 细分）",
     )
+    parser.add_argument(
+        "--led-pwm-frequency",
+        type=float,
+        default=1000.0,
+        help="紫外灯 PWM 频率（Hz），默认 1000",
+    )
+    parser.add_argument(
+        "--led-active-low",
+        action="store_true",
+        help="紫外灯驱动输入为低电平有效",
+    )
     return parser.parse_args()
 
 
@@ -67,10 +83,13 @@ def main() -> int:
         debug_buttons=args.debug_buttons,
         debug_sensor=args.debug_sensor,
         debug_motor=args.debug_motor,
+        debug_led=args.debug_led,
         motor_port=args.motor_port,
         motor_speed_rpm=args.motor_speed,
         motor_acceleration=args.motor_acceleration,
         motor_pulses_per_revolution=args.motor_pulses_per_revolution,
+        led_pwm_frequency_hz=args.led_pwm_frequency,
+        led_active_low=args.led_active_low,
     )
     return run_app(config)
 

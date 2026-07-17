@@ -8,7 +8,7 @@ from .config import AppConfig
 from .controller import ExperimentController
 from .hardware import create_hardware
 from .input import Button, ButtonEvent
-from .state import LAMP_ANGLES_DEG, DeviceState
+from .state import DeviceState
 from .view import MainView
 from .workers import ButtonPollerThread, MotorWorkerThread, VoltagePollerThread
 
@@ -19,11 +19,11 @@ KEY_TO_BUTTON = {
     pygame.K_8: (Button.SELECT_NEXT, "8"),
     pygame.K_4: (Button.DECREASE, "4"),
     pygame.K_6: (Button.INCREASE, "6"),
-    pygame.K_a: (Button.TOGGLE_MEASUREMENT, "A"),
+    pygame.K_a: (Button.CONFIRM, "A"),
     pygame.K_b: (Button.INTENSITY_UP, "B"),
     pygame.K_c: (Button.INTENSITY_DOWN, "C"),
     pygame.K_d: (Button.CLEAR_CURVE, "D"),
-    pygame.K_HASH: (Button.PAUSE_MEASUREMENT, "#"),
+    pygame.K_HASH: (Button.TOGGLE_MEASUREMENT, "#"),
     ord("*"): (Button.EXIT, "*"),
 }
 
@@ -47,23 +47,27 @@ def run_app(config: AppConfig) -> int:
             config.keypad_dir,
             config.ads1256_dir,
             config.motor_dir,
+            config.led_dir,
             motor_port=config.motor_port,
             motor_speed_rpm=config.motor_speed_rpm,
             motor_acceleration=config.motor_acceleration,
             motor_pulses_per_revolution=config.motor_pulses_per_revolution,
+            led_pwm_frequency_hz=config.led_pwm_frequency_hz,
+            led_active_low=config.led_active_low,
             debug_motor=config.debug_motor,
+            debug_led=config.debug_led,
         )
-        state = DeviceState()
+        state = DeviceState(lamp_angles_deg=hardware.stepper.lamp_angles_deg)
         state.motor_position_deg = hardware.stepper.position_deg
         initial_lamp = min(
-            range(len(LAMP_ANGLES_DEG)),
+            range(len(state.lamp_angles_deg)),
             key=lambda index: abs(
-                state.motor_position_deg - LAMP_ANGLES_DEG[index]
+                state.motor_position_deg - state.lamp_angles_deg[index]
             ),
         )
         state.lamp_index = initial_lamp
         state.active_lamp_index = initial_lamp
-        state.motor_target_deg = LAMP_ANGLES_DEG[initial_lamp]
+        state.motor_target_deg = state.lamp_angles_deg[initial_lamp]
         state.motor_ready = (
             abs(state.motor_position_deg - state.motor_target_deg) <= 0.5
         )
@@ -78,6 +82,7 @@ def run_app(config: AppConfig) -> int:
             state,
             lamp_selector=motor_worker.select_lamp,
         )
+        controller.sync_light_output()
         view = MainView(screen, config.font_dir)
         button_worker = ButtonPollerThread(hardware.buttons, poll_hz=config.button_poll_hz)
         voltage_worker = VoltagePollerThread(
@@ -119,12 +124,15 @@ def run_app(config: AppConfig) -> int:
                 if message.kind == "reading" and message.reading is not None:
                     state.last_button = message.reading.button.value
                     if message.reading.key:
-                        state.last_key = message.reading.key
+                        state.last_key = "多键" if message.reading.conflict else message.reading.key
                     if config.debug_buttons:
+                        keys = ",".join(message.reading.keys) or "-"
                         print(
                             f"[BUTTON READ] t={time.monotonic():.3f} "
                             f"button={message.reading.button.value} "
-                            f"key={message.reading.key or '-'}",
+                            f"key={message.reading.key or '-'} "
+                            f"keys={keys} "
+                            f"conflict={message.reading.conflict}",
                             flush=True,
                         )
                 elif message.kind == "event" and message.event is not None:
@@ -139,6 +147,16 @@ def run_app(config: AppConfig) -> int:
                         running = False
                     else:
                         controller.handle_button(message.event)
+                elif message.kind == "conflict" and message.reading is not None:
+                    state.last_button = "CONFLICT"
+                    state.last_key = "多键"
+                    state.status = "按键冲突：请一次只按一个键"
+                    if config.debug_buttons:
+                        print(
+                            f"[BUTTON CONFLICT] t={time.monotonic():.3f} "
+                            f"keys={','.join(message.reading.keys)}",
+                            flush=True,
+                        )
                 elif message.kind == "error":
                     state.status = f"按键读取错误：{message.error}"
                     if config.debug_buttons:
@@ -177,7 +195,7 @@ def run_app(config: AppConfig) -> int:
                     if message.lamp_index == state.lamp_index:
                         state.status = (
                             f"正在旋转至：{state.lamp_name} "
-                            f"({state.motor_target_deg:.0f}°)"
+                            f"({state.motor_target_deg:.2f}°)"
                         )
                 elif message.kind == "reached" and message.result is not None:
                     state.active_lamp_index = message.lamp_index
@@ -198,9 +216,15 @@ def run_app(config: AppConfig) -> int:
                         state.status = f"电机错误：{message.error}"
                     print(f"[MOTOR ERROR] {message.error}", flush=True)
 
+            controller.sync_light_output()
             view.draw(state)
             clock.tick(config.target_fps)
     finally:
+        if hardware is not None:
+            try:
+                hardware.light.set_enabled(False)
+            except Exception as exc:
+                print(f"[LED CLOSE ERROR] {exc}", flush=True)
         if motor_worker is not None:
             motor_worker.stop()
         if voltage_worker is not None:

@@ -10,7 +10,8 @@
 - 加速度档位：`50`
 - 每圈脉冲数：`3200`（驱动器为默认 16 细分）
 
-六个灯位与绝对角度的映射：
+六个灯位的基础角度如下。驱动会再为每个灯位统一加上
+`motor_config.json` 中的装配偏移量：
 
 | 灯位索引 | 角度 |
 | --- | ---: |
@@ -21,14 +22,33 @@
 | 4 | 240° |
 | 5 | 300° |
 
+## 装配偏移量
+
+`motor_config.json` 保存与真实电机装配有关的参数。目前只有灯组转轮的
+统一角度偏移：
+
+```json
+{
+  "lamp_angle_offset_deg": 0.0
+}
+```
+
+现场标定后直接修改这个数值。例如设为 `21.22` 后，六个实际目标角度为
+`21.22°`、`81.22°`、`141.22°`、`201.22°`、`261.22°`、`321.22°`。
+负偏移可写成 `-8.5`。程序启动时读取该文件，修改后需要重启 UI 才会生效。
+
+偏移量直接加到 EMM 的绝对坐标，不会自动折算到 `0～360°`。如果 JSON
+缺失、格式错误或偏移量不是有限数值，程序会拒绝启动并报告配置错误，避免
+使用错误灯位。
+
 ## 驱动 API
 
 ```python
 from emm_v5 import EmmConfig, EmmV5Motor
 
 motor = EmmV5Motor(EmmConfig())
-motor.open()                  # 自动选择 CH340，握手并确保电机使能
-result = motor.select_lamp(3) # 转到 180°，确认实际到位后返回
+motor.open()                  # 默认使用树莓派 GPIO UART /dev/serial0，握手并确保电机使能
+result = motor.select_lamp(3) # 转到 180° + 装配偏移量，确认实际到位后返回
 print(result.actual_angle_deg)
 motor.close()
 ```
@@ -53,10 +73,16 @@ motor.close()
 /home/cc/Desktop/UICode/.venv/bin/python -m pip install pyserial
 ```
 
-如果系统存在多个 CH340，可在 UI 启动时指定端口：
+默认会使用树莓派 GPIO UART `/dev/serial0`。如果需要覆盖端口，可在 UI 启动时指定：
 
 ```bash
-python /home/cc/Desktop/UICode/UI/app.py --backend hardware --motor-port /dev/ttyUSB0
+python /home/cc/Desktop/UICode/UI/app.py --backend hardware --motor-port /dev/serial0
+```
+
+树莓派上单独测试电机位置时，可直接运行：
+
+```bash
+/home/cc/Desktop/UICode/.venv/bin/python /home/cc/Desktop/UICode/42Motor/raspi_test_position.py
 ```
 
 如果驱动器的 `MStep` 不是默认 16 细分，需要同步传入实际每圈脉冲数。例如 32 细分使用：
@@ -66,4 +92,4 @@ python /home/cc/Desktop/UICode/UI/app.py --backend hardware \
   --motor-pulses-per-revolution 6400
 ```
 
-`test/test_serial.py` 用于只读握手测试，`test/test_position.py` 用于单独进行交互位置测试。UI 与测试程序不能同时占用同一个串口。
+`test/test_serial.py` 用于只读握手测试，`test/test_position.py` 用于单独进行交互位置测试；`raspi_test_position.py` 是放在 `42Motor` 根目录的树莓派运行入口。UI 与测试程序不能同时占用同一个串口。

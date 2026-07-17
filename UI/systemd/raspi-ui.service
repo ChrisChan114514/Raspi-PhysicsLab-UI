@@ -1,17 +1,19 @@
 [Unit]
 Description=Photoelectric Current Experiment UI (1024x600 fullscreen)
-After=graphical.target
-Wants=graphical.target
+After=display-manager.service
+Wants=display-manager.service
 
 [Service]
+Type=simple
 User=cc
+Group=cc
 WorkingDirectory=/home/cc/Desktop/UICode
+Environment=HOME=/home/cc
 Environment=PYTHONUNBUFFERED=1
-Environment=DISPLAY=:0
-Environment=XAUTHORITY=/home/cc/.Xauthority
-ExecStart=/home/cc/Desktop/UICode/.venv/bin/python /home/cc/Desktop/UICode/UI/app.py --backend hardware
+ExecStart=/bin/bash /home/cc/Desktop/UICode/UI/run_hardware_ui.sh
 Restart=on-failure
-RestartSec=2
+RestartSec=5
+TimeoutStopSec=10
 
 [Install]
 WantedBy=graphical.target

@@ -8,15 +8,15 @@ import time
 from dataclasses import dataclass
 from typing import Optional
 
+from motor_config import MotorParameters, load_motor_parameters
+
 try:
     import serial
-    from serial.tools import list_ports
 except ModuleNotFoundError:
     serial = None
-    list_ports = None
 
 
-LAMP_ANGLES = (0.0, 60.0, 120.0, 180.0, 240.0, 300.0)
+RASPI_GPIO_SERIAL_PORT = "/dev/serial0"
 
 VERSION_FUNCTION = 0x1F
 ENABLE_FUNCTION = 0xF3
@@ -120,41 +120,14 @@ def hex_bytes(data: bytes) -> str:
     return data.hex(" ").upper() if data else "<no data>"
 
 
-def port_description(port_info) -> str:
-    fields = (
-        port_info.device,
-        port_info.description,
-        port_info.manufacturer,
-        port_info.hwid,
-    )
-    return " | ".join(str(value) for value in fields if value)
-
-
-def find_ch340_port() -> tuple[str, str, tuple[str, ...]]:
-    if list_ports is None:
-        raise EmmConnectionError("pyserial is not installed")
-
-    matches = []
-    for port_info in list_ports.comports():
-        description = port_description(port_info)
-        if "CH340" in description.upper():
-            matches.append(port_info)
-
-    if not matches:
-        raise EmmConnectionError("no active serial device containing CH340 was found")
-
-    matches.sort(key=lambda item: item.device)
-    selected = matches[0]
-    others = tuple(port_description(item) for item in matches[1:])
-    return selected.device, port_description(selected), others
-
-
 class EmmV5Motor:
     """Synchronous EMM motor API intended to run in a hardware worker thread."""
 
     def __init__(self, config: Optional[EmmConfig] = None) -> None:
         self.config = config or EmmConfig()
         self.config.validate()
+        self.parameters: MotorParameters = load_motor_parameters()
+        self._lamp_angles_deg = self.parameters.lamp_angles_deg
         self._port: Optional["serial.Serial"] = None
         self._port_name: Optional[str] = None
         self._lock = threading.RLock()
@@ -172,6 +145,10 @@ class EmmV5Motor:
     def last_position_deg(self) -> float:
         return self._last_position_deg
 
+    @property
+    def lamp_angles_deg(self) -> tuple[float, ...]:
+        return self._lamp_angles_deg
+
     def open(self) -> VersionInfo:
         with self._lock:
             if self.is_open:
@@ -184,13 +161,11 @@ class EmmV5Motor:
             if self.config.port:
                 port_name = self.config.port
                 description = port_name
-                other_matches: tuple[str, ...] = ()
             else:
-                port_name, description, other_matches = find_ch340_port()
+                port_name = RASPI_GPIO_SERIAL_PORT
+                description = f"Raspberry Pi GPIO UART {RASPI_GPIO_SERIAL_PORT}"
 
             self._debug(f"opening {description}")
-            if other_matches:
-                self._debug("other CH340 ports: " + "; ".join(other_matches))
 
             try:
                 self._port = serial.Serial(
@@ -323,9 +298,15 @@ class EmmV5Motor:
         lamp_index: int,
         cancel_event: Optional[threading.Event] = None,
     ) -> MoveResult:
-        if not 0 <= lamp_index < len(LAMP_ANGLES):
-            raise ValueError(f"lamp_index must be in the range 0..{len(LAMP_ANGLES) - 1}")
-        result = self.move_to_angle(LAMP_ANGLES[lamp_index], cancel_event=cancel_event)
+        if not 0 <= lamp_index < len(self._lamp_angles_deg):
+            raise ValueError(
+                "lamp_index must be in the range "
+                f"0..{len(self._lamp_angles_deg) - 1}"
+            )
+        result = self.move_to_angle(
+            self._lamp_angles_deg[lamp_index],
+            cancel_event=cancel_event,
+        )
         return MoveResult(
             target_angle_deg=result.target_angle_deg,
             actual_angle_deg=result.actual_angle_deg,

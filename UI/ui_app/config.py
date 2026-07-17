@@ -15,10 +15,13 @@ class AppConfig:
     debug_buttons: bool = False
     debug_sensor: bool = False
     debug_motor: bool = False
+    debug_led: bool = False
     motor_port: str | None = None
     motor_speed_rpm: int = 60
     motor_acceleration: int = 50
     motor_pulses_per_revolution: int = 3200
+    led_pwm_frequency_hz: float = 1000.0
+    led_active_low: bool = False
 
     @property
     def keypad_dir(self) -> Path:
@@ -35,3 +38,7 @@ class AppConfig:
     @property
     def motor_dir(self) -> Path:
         return self.project_root / "42Motor"
+
+    @property
+    def led_dir(self) -> Path:
+        return self.project_root / "LED"
