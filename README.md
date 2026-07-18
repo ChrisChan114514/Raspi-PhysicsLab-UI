@@ -32,7 +32,7 @@ MF500 USB 摄像头实时画面，电压采样继续在后台运行。
 
 ```bash
 sudo apt update
-sudo apt install -y python3-lgpio python3-opencv v4l-utils
+sudo apt install -y python3-venv python3-lgpio python3-opencv v4l-utils
 cd /home/cc/Desktop/UICode
 python3 -m venv --system-site-packages .venv
 source .venv/bin/activate
@@ -106,7 +106,10 @@ DISPLAY=:0 XAUTHORITY=/home/cc/.Xauthority \
 ## 开机自启动
 
 启动脚本 `UI/run_hardware_ui.sh` 会等待图形桌面和 `.Xauthority` 最多
-60 秒，再激活虚拟环境并以硬件模式运行 UI。先手动验证：
+60 秒，再激活虚拟环境并以硬件模式运行 UI。如果 `.venv` 不存在，脚本会
+优先使用 `/usr/bin/python3` 创建 `--system-site-packages` 环境，并自动安装
+`UI/requirements.txt`；环境存在但缺少 pygame、NumPy、OpenCV 或 pyserial
+时也会自动补装。先手动验证：
 
 ```bash
 /bin/bash /home/cc/Desktop/UICode/UI/run_hardware_ui.sh
@@ -132,6 +135,8 @@ sudo systemctl disable --now raspi-ui.service
 
 service 通过 `/bin/bash` 调用启动脚本，因此脚本不依赖可执行权限。服务只在
 程序异常退出或启动环境未就绪时重试；按 `*` 正常退出后不会自动重开。
+`lgpio` 必须由 `python3-lgpio` 系统包提供，脚本检测到缺失时会输出对应的
+`apt` 安装命令后退出。
 
 ## GPIO 总览
 

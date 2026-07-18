@@ -52,6 +52,7 @@ DISPLAY=:0 XAUTHORITY=/home/cc/.Xauthority \
 
 通过启动脚本运行 UI 硬件模式：
 /bin/bash /home/cc/Desktop/UICode/UI/run_hardware_ui.sh
+（没有 .venv 时自动使用 /usr/bin/python3 创建并安装 UI/requirements.txt）
 
 安装并立即启用 UI 开机自启动：
 （树莓派需要启用 cc 用户的桌面自动登录）
