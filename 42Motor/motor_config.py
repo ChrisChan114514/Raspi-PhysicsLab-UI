@@ -59,3 +59,34 @@ def load_motor_parameters(
         raise MotorConfigError("lamp_angle_offset_deg must be finite")
 
     return MotorParameters(lamp_angle_offset_deg=offset)
+
+
+def save_lamp_angle_offset(
+    lamp_angle_offset_deg: float,
+    config_path: str | Path | None = None,
+) -> MotorParameters:
+    if isinstance(lamp_angle_offset_deg, bool) or not isinstance(
+        lamp_angle_offset_deg,
+        (int, float),
+    ):
+        raise MotorConfigError("lamp_angle_offset_deg must be a number")
+    offset = float(lamp_angle_offset_deg)
+    if not math.isfinite(offset):
+        raise MotorConfigError("lamp_angle_offset_deg must be finite")
+
+    path = Path(config_path) if config_path is not None else DEFAULT_CONFIG_PATH
+    temporary_path = path.with_suffix(path.suffix + ".tmp")
+    payload = {"lamp_angle_offset_deg": round(offset, 6)}
+    try:
+        temporary_path.write_text(
+            json.dumps(payload, ensure_ascii=True, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        temporary_path.replace(path)
+    except OSError as exc:
+        try:
+            temporary_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise MotorConfigError(f"cannot write motor parameter file {path}: {exc}") from exc
+    return MotorParameters(lamp_angle_offset_deg=offset)

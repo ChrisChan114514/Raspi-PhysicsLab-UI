@@ -149,6 +149,11 @@ class EmmV5Motor:
     def lamp_angles_deg(self) -> tuple[float, ...]:
         return self._lamp_angles_deg
 
+    def set_lamp_angle_offset(self, offset_deg: float) -> None:
+        parameters = MotorParameters(lamp_angle_offset_deg=float(offset_deg))
+        self.parameters = parameters
+        self._lamp_angles_deg = parameters.lamp_angles_deg
+
     def open(self) -> VersionInfo:
         with self._lock:
             if self.is_open:

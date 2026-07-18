@@ -21,9 +21,10 @@ MATRIX_KEY_TO_BUTTON = {
     "B": Button.INTENSITY_UP,
     "C": Button.INTENSITY_DOWN,
     "D": Button.CLEAR_CURVE,
+    "5": Button.TOGGLE_CAMERA,
     "#": Button.TOGGLE_MEASUREMENT,
     "1": Button.TOGGLE_FFT,
-    "*": Button.EXIT,
+    "*": Button.TEXT_INPUT,
 }
 
 
@@ -78,7 +79,7 @@ class MatrixKeypadButtonReader(ButtonReader):
                 conflict=True,
             )
         for key in keys:
-            button = MATRIX_KEY_TO_BUTTON.get(key, Button.NONE)
+            button = MATRIX_KEY_TO_BUTTON.get(key, Button.TEXT_INPUT)
             return ButtonReading(button=button, key=key, keys=(key,))
         return ButtonReading(Button.NONE)
 
@@ -112,6 +113,17 @@ class StepperMotor(ABC):
     ) -> StepperMoveResult:
         raise NotImplementedError
 
+    @abstractmethod
+    def move_to_angle(
+        self,
+        target_angle_deg: float,
+        cancel_event: threading.Event | None = None,
+    ) -> StepperMoveResult:
+        raise NotImplementedError
+
+    def save_lamp_angle_offset(self, offset_deg: float) -> None:
+        raise NotImplementedError
+
     def stop(self) -> None:
         return None
 
@@ -120,9 +132,14 @@ class StepperMotor(ABC):
 
 
 class SimulatedStepperMotor(StepperMotor):
-    def __init__(self, lamp_angles_deg: tuple[float, ...]) -> None:
+    def __init__(
+        self,
+        lamp_angles_deg: tuple[float, ...],
+        motor_config_path: Path,
+    ) -> None:
         self._lamp_angles_deg = lamp_angles_deg
-        self.position = 0
+        self._position_deg = lamp_angles_deg[0]
+        self._motor_config_path = motor_config_path
 
     @property
     def lamp_angles_deg(self) -> tuple[float, ...]:
@@ -130,7 +147,7 @@ class SimulatedStepperMotor(StepperMotor):
 
     @property
     def position_deg(self) -> float:
-        return self._lamp_angles_deg[self.position]
+        return self._position_deg
 
     def select_lamp(
         self,
@@ -139,8 +156,8 @@ class SimulatedStepperMotor(StepperMotor):
     ) -> StepperMoveResult:
         del cancel_event
         started = time.monotonic()
-        self.position = lamp_index
         angle = self._lamp_angles_deg[lamp_index]
+        self._position_deg = angle
         return StepperMoveResult(
             lamp_index=lamp_index,
             target_angle_deg=angle,
@@ -148,6 +165,28 @@ class SimulatedStepperMotor(StepperMotor):
             error_deg=0.0,
             elapsed_s=time.monotonic() - started,
         )
+
+    def move_to_angle(
+        self,
+        target_angle_deg: float,
+        cancel_event: threading.Event | None = None,
+    ) -> StepperMoveResult:
+        del cancel_event
+        started = time.monotonic()
+        self._position_deg = float(target_angle_deg)
+        return StepperMoveResult(
+            lamp_index=-1,
+            target_angle_deg=self._position_deg,
+            actual_angle_deg=self._position_deg,
+            error_deg=0.0,
+            elapsed_s=time.monotonic() - started,
+        )
+
+    def save_lamp_angle_offset(self, offset_deg: float) -> None:
+        from motor_config import save_lamp_angle_offset  # noqa: PLC0415
+
+        parameters = save_lamp_angle_offset(offset_deg, self._motor_config_path)
+        self._lamp_angles_deg = parameters.lamp_angles_deg
 
 
 class EMMV5StepperMotor(StepperMotor):
@@ -165,6 +204,7 @@ class EMMV5StepperMotor(StepperMotor):
             raise FileNotFoundError(f"未找到 EMM 电机驱动：{driver_path}")
         sys.path.insert(0, str(motor_dir))
         from emm_v5 import EmmConfig, EmmV5Motor  # noqa: PLC0415
+        from motor_config import save_lamp_angle_offset  # noqa: PLC0415
 
         config = EmmConfig(
             port=port,
@@ -174,6 +214,8 @@ class EMMV5StepperMotor(StepperMotor):
             debug=debug,
         )
         self._motor = EmmV5Motor(config)
+        self._motor_config_path = motor_dir / "motor_config.json"
+        self._save_lamp_angle_offset = save_lamp_angle_offset
         self._lamp_angles_deg = self._motor.lamp_angles_deg
         version = self._motor.open()
         print(
@@ -205,6 +247,31 @@ class EMMV5StepperMotor(StepperMotor):
             error_deg=result.error_deg,
             elapsed_s=result.elapsed_s,
         )
+
+    def move_to_angle(
+        self,
+        target_angle_deg: float,
+        cancel_event: threading.Event | None = None,
+    ) -> StepperMoveResult:
+        result = self._motor.move_to_angle(
+            target_angle_deg,
+            cancel_event=cancel_event,
+        )
+        return StepperMoveResult(
+            lamp_index=-1,
+            target_angle_deg=result.target_angle_deg,
+            actual_angle_deg=result.actual_angle_deg,
+            error_deg=result.error_deg,
+            elapsed_s=result.elapsed_s,
+        )
+
+    def save_lamp_angle_offset(self, offset_deg: float) -> None:
+        parameters = self._save_lamp_angle_offset(
+            offset_deg,
+            self._motor_config_path,
+        )
+        self._motor.set_lamp_angle_offset(parameters.lamp_angle_offset_deg)
+        self._lamp_angles_deg = parameters.lamp_angles_deg
 
     def stop(self) -> None:
         self._motor.stop()
@@ -579,7 +646,10 @@ def create_hardware(
     return HardwareBundle(
         SimulatedButtonReader(),
         SimulatedPhotocurrentSensor(),
-        SimulatedStepperMotor(motor_parameters.lamp_angles_deg),
+        SimulatedStepperMotor(
+            motor_parameters.lamp_angles_deg,
+            motor_dir / "motor_config.json",
+        ),
         SimulatedLightController(),
         SimulatedCameraSource(),
     )

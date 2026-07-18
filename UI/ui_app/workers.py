@@ -184,6 +184,7 @@ class CameraPollerThread:
         self.camera = camera
         self.period_s = 1.0 / capture_hz
         self.messages: queue.Queue[CameraWorkerMessage] = queue.Queue(maxsize=1)
+        self._enabled_event = threading.Event()
         self._stop_event = threading.Event()
         self._thread = threading.Thread(
             target=self._run,
@@ -194,8 +195,15 @@ class CameraPollerThread:
     def start(self) -> None:
         self._thread.start()
 
+    def set_enabled(self, enabled: bool) -> None:
+        if enabled:
+            self._enabled_event.set()
+        else:
+            self._enabled_event.clear()
+
     def stop(self) -> None:
         self._stop_event.set()
+        self._enabled_event.set()
         if self._thread.is_alive():
             self._thread.join(timeout=2.0)
         if self._thread.is_alive():
@@ -224,20 +232,32 @@ class CameraPollerThread:
                     pass
 
     def _run(self) -> None:
-        while not self._stop_event.is_set():
-            started = time.monotonic()
-            try:
-                frame = self.camera.read()
-                self._publish(CameraWorkerMessage(kind="frame", frame=frame))
-            except Exception as exc:  # pragma: no cover - hardware path
-                self._publish(CameraWorkerMessage(kind="error", error=str(exc)))
-                if self._stop_event.wait(0.5):
-                    break
+        camera_active = False
+        try:
+            while not self._stop_event.is_set():
+                if not self._enabled_event.is_set():
+                    if camera_active:
+                        self.camera.close()
+                        camera_active = False
+                    self._enabled_event.wait(0.1)
+                    continue
 
-            elapsed = time.monotonic() - started
-            remaining = self.period_s - elapsed
-            if remaining > 0:
-                self._stop_event.wait(remaining)
+                started = time.monotonic()
+                try:
+                    frame = self.camera.read()
+                    camera_active = True
+                    self._publish(CameraWorkerMessage(kind="frame", frame=frame))
+                except Exception as exc:  # pragma: no cover - hardware path
+                    self._publish(CameraWorkerMessage(kind="error", error=str(exc)))
+                    if self._stop_event.wait(0.5):
+                        break
+
+                elapsed = time.monotonic() - started
+                remaining = self.period_s - elapsed
+                if remaining > 0:
+                    self._stop_event.wait(remaining)
+        finally:
+            self.camera.close()
 
 
 @dataclass(frozen=True)
@@ -252,7 +272,7 @@ class MotorWorkerThread:
     def __init__(self, motor: StepperMotor) -> None:
         self.motor = motor
         self.messages: queue.Queue[MotorWorkerMessage] = queue.Queue()
-        self._requests: queue.Queue[int] = queue.Queue()
+        self._requests: queue.Queue[tuple[int, float | None]] = queue.Queue()
         self._stop_event = threading.Event()
         self._thread = threading.Thread(
             target=self._run,
@@ -264,7 +284,10 @@ class MotorWorkerThread:
         self._thread.start()
 
     def select_lamp(self, lamp_index: int) -> None:
-        self._requests.put(lamp_index)
+        self._requests.put((lamp_index, None))
+
+    def move_to_angle(self, lamp_index: int, target_angle_deg: float) -> None:
+        self._requests.put((lamp_index, float(target_angle_deg)))
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -289,23 +312,29 @@ class MotorWorkerThread:
     def _run(self) -> None:
         while not self._stop_event.is_set():
             try:
-                lamp_index = self._requests.get(timeout=0.1)
+                lamp_index, target_angle_deg = self._requests.get(timeout=0.1)
             except queue.Empty:
                 continue
 
             # If several keys were pressed during a move, execute only the newest target.
             while True:
                 try:
-                    lamp_index = self._requests.get_nowait()
+                    lamp_index, target_angle_deg = self._requests.get_nowait()
                 except queue.Empty:
                     break
 
             self.messages.put(MotorWorkerMessage("moving", lamp_index))
             try:
-                result = self.motor.select_lamp(
-                    lamp_index,
-                    cancel_event=self._stop_event,
-                )
+                if target_angle_deg is None:
+                    result = self.motor.select_lamp(
+                        lamp_index,
+                        cancel_event=self._stop_event,
+                    )
+                else:
+                    result = self.motor.move_to_angle(
+                        target_angle_deg,
+                        cancel_event=self._stop_event,
+                    )
                 self.messages.put(
                     MotorWorkerMessage("reached", lamp_index, result=result)
                 )

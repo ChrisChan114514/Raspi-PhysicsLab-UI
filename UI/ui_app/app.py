@@ -28,8 +28,13 @@ KEY_TO_BUTTON = {
     pygame.K_b: (Button.INTENSITY_UP, "B"),
     pygame.K_c: (Button.INTENSITY_DOWN, "C"),
     pygame.K_d: (Button.CLEAR_CURVE, "D"),
+    pygame.K_5: (Button.TOGGLE_CAMERA, "5"),
     pygame.K_HASH: (Button.TOGGLE_MEASUREMENT, "#"),
-    ord("*"): (Button.EXIT, "*"),
+    pygame.K_0: (Button.TEXT_INPUT, "0"),
+    pygame.K_3: (Button.TEXT_INPUT, "3"),
+    pygame.K_7: (Button.TEXT_INPUT, "7"),
+    pygame.K_9: (Button.TEXT_INPUT, "9"),
+    ord("*"): (Button.TEXT_INPUT, "*"),
 }
 
 
@@ -90,6 +95,8 @@ def run_app(config: AppConfig) -> int:
             hardware,
             state,
             lamp_selector=motor_worker.select_lamp,
+            angle_selector=motor_worker.move_to_angle,
+            offset_saver=hardware.stepper.save_lamp_angle_offset,
         )
         if state.motor_ready:
             controller.sync_light_output()
@@ -102,6 +109,7 @@ def run_app(config: AppConfig) -> int:
             hardware.camera,
             capture_hz=config.camera_fps,
         )
+        camera_worker.set_enabled(state.camera_visible)
         voltage_worker = VoltagePollerThread(
             hardware.photocurrent,
             sample_hz=config.voltage_sample_hz,
@@ -129,14 +137,9 @@ def run_app(config: AppConfig) -> int:
                 if event.type == pygame.QUIT:
                     running = False
                 elif event.type == pygame.KEYDOWN:
-                    if event.key == pygame.K_ESCAPE:
-                        running = False
-                    elif event.key in KEY_TO_BUTTON:
+                    if event.key in KEY_TO_BUTTON:
                         button, key = KEY_TO_BUTTON[event.key]
-                        if button == Button.EXIT:
-                            running = False
-                        else:
-                            controller.handle_button(ButtonEvent(button, key))
+                        controller.handle_button(ButtonEvent(button, key))
 
             for message in button_worker.drain():
                 if message.kind == "reading" and message.reading is not None:
@@ -161,10 +164,7 @@ def run_app(config: AppConfig) -> int:
                             f"key={message.event.key or '-'}",
                             flush=True,
                         )
-                    if message.event.button == Button.EXIT:
-                        running = False
-                    else:
-                        controller.handle_button(message.event)
+                    controller.handle_button(message.event)
                 elif message.kind == "conflict" and message.reading is not None:
                     state.last_button = "CONFLICT"
                     state.last_key = "多键"
@@ -181,7 +181,13 @@ def run_app(config: AppConfig) -> int:
                         print(f"[BUTTON ERROR] {message.error}", flush=True)
 
             for message in camera_worker.drain():
-                if message.kind == "frame" and message.frame is not None:
+                if not state.camera_visible:
+                    state.camera_ready = False
+                    state.camera_frame_rgb = None
+                    state.camera_frame_size = (0, 0)
+                    state.camera_frame_at_s = 0.0
+                    state.camera_error = ""
+                elif message.kind == "frame" and message.frame is not None:
                     first_frame = state.camera_frame_rgb is None
                     state.camera_ready = True
                     state.camera_frame_rgb = message.frame.rgb_bytes
@@ -205,6 +211,8 @@ def run_app(config: AppConfig) -> int:
                     state.camera_error = message.error
                     if config.debug_camera:
                         print(f"[CAMERA ERROR] {message.error}", flush=True)
+
+            camera_worker.set_enabled(state.camera_visible)
 
             voltage_worker.set_context(state.active_lamp_index, state.intensity_percent)
             voltage_worker.set_enabled(state.measuring)
@@ -245,8 +253,15 @@ def run_app(config: AppConfig) -> int:
                     state.active_lamp_index = message.lamp_index
                     state.motor_position_deg = message.result.actual_angle_deg
                     state.motor_error = ""
-                    state.motor_moving = message.lamp_index != state.lamp_index
-                    if message.lamp_index == state.lamp_index:
+                    current_target = (
+                        message.lamp_index == state.lamp_index
+                        and abs(
+                            message.result.target_angle_deg
+                            - state.motor_target_deg
+                        ) <= 0.05
+                    )
+                    state.motor_moving = not current_target
+                    if current_target:
                         state.motor_ready = True
                         state.status = (
                             f"OK：{state.lamp_name} 已到位 "

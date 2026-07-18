@@ -24,7 +24,7 @@ FFT_CURVE = (238, 174, 71)
 CONTROL_LABELS = {
     "lamp": "灯组转轮",
     "intensity": "照明光强",
-    "measurement": "测量状态",
+    "camera": "USB实时摄像",
 }
 
 KEY_GUIDES = (
@@ -32,13 +32,14 @@ KEY_GUIDES = (
     ("2", "上选"),
     ("8", "下选"),
     ("4", "左/减"),
+    ("5", "摄像"),
     ("6", "右/增"),
     ("A", "确认"),
     ("B", "光强+"),
     ("C", "光强-"),
     ("D", "清空"),
     ("#", "启停"),
-    ("*", "退出"),
+    ("*", "小数"),
 )
 
 class MixedFont:
@@ -141,7 +142,10 @@ class MainView:
         chart = pygame.Rect(controls.right + 14, content_y, width - controls.right - 30, content_h)
 
         self._draw_header(header, state)
-        self._draw_controls(controls, state)
+        if state.motor_adjustment_active:
+            self._draw_motor_adjustment(controls, state)
+        else:
+            self._draw_controls(controls, state)
         self._draw_chart(chart, state)
         self._draw_key_guide(footer, state.last_key)
         pygame.display.flip()
@@ -173,14 +177,11 @@ class MainView:
         self._text("实验参数", self.font_heading, TEXT, rect.x + 16, rect.y + 13)
         self._text("2 / 8 选择", self.font_small, MUTED, rect.right - 96, rect.y + 18)
 
-        values = {
-            "intensity": f"{state.intensity_percent}%",
-            "measurement": "测量中" if state.measuring else "已暂停",
-        }
+        values = {"intensity": f"{state.intensity_percent}%"}
         item_y = rect.y + 50
         for key in CONTROL_ITEMS:
             active = state.selected_name == key
-            item_h = 118 if key == "lamp" else 72
+            item_h = 118 if key in {"lamp", "camera"} else 72
             item_rect = pygame.Rect(rect.x + 12, item_y, rect.width - 24, item_h)
             pygame.draw.rect(
                 self.screen,
@@ -206,13 +207,24 @@ class MainView:
                     label += " · 待定位"
             elif key == "intensity":
                 label += " · UV亮" if state.light_on else " · UV灭"
+            elif not state.camera_enabled and state.camera_auto_visible:
+                label += " · 自动显示"
+            elif not state.camera_enabled:
+                label += " · 已关闭"
+            elif state.camera_ready:
+                label += " · 已连接"
+            elif state.camera_error:
+                label += " · 异常"
+            else:
+                label += " · 连接中"
             self._text(label, self.font_small, MUTED, item_rect.x + 14, item_rect.y + 9)
 
             if key == "lamp":
                 self._draw_lamp_selector(item_rect, state, active)
+            elif key == "camera":
+                self._draw_camera_selector(item_rect, state, active)
             else:
-                value_color = ACCENT if key == "measurement" and state.measuring else TEXT
-                self._text(values[key], self.font_heading, value_color, item_rect.x + 14, item_rect.y + 34)
+                self._text(values[key], self.font_heading, TEXT, item_rect.x + 14, item_rect.y + 34)
 
             if key == "intensity":
                 bar = pygame.Rect(item_rect.right - 92, item_rect.y + 43, 72, 7)
@@ -223,26 +235,12 @@ class MainView:
                     pygame.draw.rect(self.screen, WARN, fill, border_radius=3)
             item_y = item_rect.bottom + 8
 
-        camera_rect = pygame.Rect(rect.x + 12, item_y + 2, rect.width - 24, 50)
-        pygame.draw.rect(self.screen, PANEL_DARK, camera_rect, border_radius=5)
-        self._text("USB摄像头", self.font_small, MUTED, camera_rect.x + 14, camera_rect.y + 15)
-        if state.camera_ready:
-            camera_text = "已连接"
-            camera_color = ACCENT
-        elif state.camera_error:
-            camera_text = "异常"
-            camera_color = WARN
-        else:
-            camera_text = "连接中"
-            camera_color = MUTED
-        self._text(camera_text, self.font_body, camera_color, camera_rect.right - 78, camera_rect.y + 13)
-
         if state.selected_name == "lamp":
-            control_hint = "4 / 6 选择方向，A 确认"
+            control_hint = "4 / 6 选灯，中间 A 手动调节"
         elif state.selected_name == "intensity":
             control_hint = "4 / 6 调整光强"
         else:
-            control_hint = "# 开始 / 暂停测量"
+            control_hint = "4 小窗 / 6 全屏，A 或 5 开关"
         self._text(
             control_hint,
             self.font_small,
@@ -251,6 +249,103 @@ class MainView:
             rect.bottom - 27,
             max_width=rect.width - 32,
         )
+
+    def _draw_motor_adjustment(
+        self,
+        rect: pygame.Rect,
+        state: DeviceState,
+    ) -> None:
+        pygame.draw.rect(self.screen, PANEL, rect, border_radius=6)
+        pygame.draw.rect(
+            self.screen,
+            WARN,
+            (rect.x, rect.y, 6, rect.height),
+            border_radius=3,
+        )
+        self._text("手动角度调节", self.font_heading, TEXT, rect.x + 18, rect.y + 13)
+        self._text(
+            state.lamp_name,
+            self.font_body,
+            WARN,
+            rect.right - 88,
+            rect.y + 16,
+            max_width=72,
+        )
+
+        input_rect = pygame.Rect(rect.x + 14, rect.y + 54, rect.width - 28, 76)
+        pygame.draw.rect(self.screen, PANEL_DARK, input_rect, border_radius=5)
+        pygame.draw.rect(self.screen, ACCENT, input_rect, width=2, border_radius=5)
+        angle_text = f"{state.motor_adjustment_input or '0'}°"
+        self._center_text(angle_text, self.font_title, TEXT, input_rect)
+
+        self._text(
+            f"装配偏移：{state.lamp_angle_offset_deg:+.3f}°",
+            self.font_small,
+            MUTED,
+            rect.x + 16,
+            input_rect.bottom + 10,
+        )
+        motor_text = (
+            "电机实时移动中"
+            if state.motor_moving
+            else f"当前位置：{state.motor_position_deg:.3f}°"
+        )
+        self._text(
+            state.motor_adjustment_error or motor_text,
+            self.font_small,
+            WARN if state.motor_adjustment_error or state.motor_moving else ACCENT,
+            rect.x + 16,
+            input_rect.bottom + 34,
+            max_width=rect.width - 32,
+        )
+        self._text(
+            "数字键直接输入目标角度",
+            self.font_small,
+            MUTED,
+            rect.x + 16,
+            input_rect.bottom + 58,
+        )
+
+        key_gap = 8
+        key_width = (rect.width - 36 - key_gap) // 2
+        key_height = 45
+        key_x = rect.x + 14
+        key_y = rect.y + 226
+        adjustment_keys = (
+            ("A", "+0.1°"),
+            ("B", "-0.1°"),
+            ("C", "+0.5°"),
+            ("D", "-0.5°"),
+        )
+        for index, (key, label) in enumerate(adjustment_keys):
+            column = index % 2
+            row = index // 2
+            key_rect = pygame.Rect(
+                key_x + column * (key_width + key_gap),
+                key_y + row * (key_height + key_gap),
+                key_width,
+                key_height,
+            )
+            self._draw_adjustment_key(key_rect, key, label)
+
+        footer_y = rect.bottom - 50
+        self._text("*  小数点", self.font_body, TEXT, rect.x + 18, footer_y)
+        save_rect = pygame.Rect(rect.right - 128, footer_y - 7, 112, 38)
+        pygame.draw.rect(self.screen, ACCENT_DARK, save_rect, border_radius=5)
+        pygame.draw.rect(self.screen, ACCENT, save_rect, width=2, border_radius=5)
+        self._center_text("#  保存退出", self.font_small, TEXT, save_rect)
+
+    def _draw_adjustment_key(
+        self,
+        rect: pygame.Rect,
+        key: str,
+        label: str,
+    ) -> None:
+        pygame.draw.rect(self.screen, PANEL_DARK, rect, border_radius=5)
+        key_rect = pygame.Rect(rect.x + 7, rect.y + 7, 30, rect.height - 14)
+        pygame.draw.rect(self.screen, GRID, key_rect, border_radius=4)
+        self._center_text(key, self.font_key, TEXT, key_rect)
+        self._text(label, self.font_body, TEXT, rect.x + 46, rect.y + 11)
 
     def _draw_lamp_selector(
         self,
@@ -274,9 +369,31 @@ class MainView:
             56,
         )
         left_focused = active and state.lamp_arrow_focus < 0
+        center_focused = active and state.lamp_arrow_focus == 0
         right_focused = active and state.lamp_arrow_focus > 0
         self._draw_arrow_button(left_rect, -1, left_focused)
         self._draw_arrow_button(right_rect, 1, right_focused)
+
+        if center_focused:
+            focus_rect = pygame.Rect(
+                center_rect.x - 4,
+                center_rect.y - 4,
+                center_rect.width + 8,
+                80,
+            )
+            pygame.draw.rect(
+                self.screen,
+                ACCENT_DARK,
+                focus_rect,
+                border_radius=5,
+            )
+            pygame.draw.rect(
+                self.screen,
+                ACCENT,
+                focus_rect,
+                width=2,
+                border_radius=5,
+            )
 
         value_color = WARN if not state.motor_ready else TEXT
         self._center_text(
@@ -313,6 +430,65 @@ class MainView:
             right_label_rect,
         )
 
+    def _draw_camera_selector(
+        self,
+        item_rect: pygame.Rect,
+        state: DeviceState,
+        active: bool,
+    ) -> None:
+        arrow_y = item_rect.y + 50
+        arrow_size = 42
+        left_rect = pygame.Rect(item_rect.x + 14, arrow_y, arrow_size, arrow_size)
+        right_rect = pygame.Rect(
+            item_rect.right - arrow_size - 14,
+            arrow_y,
+            arrow_size,
+            arrow_size,
+        )
+        center_rect = pygame.Rect(
+            left_rect.right + 8,
+            item_rect.y + 35,
+            right_rect.x - left_rect.right - 16,
+            56,
+        )
+        self._draw_arrow_button(
+            left_rect,
+            -1,
+            active and state.camera_view_mode == "small",
+        )
+        self._draw_arrow_button(
+            right_rect,
+            1,
+            active and state.camera_view_mode == "full",
+        )
+
+        enabled_text = "实时开启" if state.camera_enabled else "已关闭"
+        enabled_color = ACCENT if state.camera_enabled else MUTED
+        self._center_text(
+            enabled_text,
+            self.font_heading,
+            enabled_color,
+            pygame.Rect(center_rect.x, center_rect.y - 2, center_rect.width, 28),
+        )
+        self._center_text(
+            state.camera_view_name,
+            self.font_small,
+            TEXT,
+            pygame.Rect(center_rect.x, center_rect.y + 27, center_rect.width, 22),
+        )
+        self._center_text(
+            "小窗",
+            self.font_small,
+            MUTED,
+            pygame.Rect(left_rect.x - 9, left_rect.bottom + 4, 60, 18),
+        )
+        self._center_text(
+            "全屏",
+            self.font_small,
+            MUTED,
+            pygame.Rect(right_rect.x - 9, right_rect.bottom + 4, 60, 18),
+        )
+
     def _draw_arrow_button(
         self,
         rect: pygame.Rect,
@@ -347,7 +523,7 @@ class MainView:
         pygame.draw.polygon(self.screen, TEXT if focused else MUTED, points)
 
     def _draw_chart(self, rect: pygame.Rect, state: DeviceState) -> None:
-        if state.motor_moving:
+        if state.camera_visible and state.camera_view_mode == "full":
             self._draw_camera(rect, state)
             return
 
@@ -401,9 +577,12 @@ class MainView:
         elapsed_surface = self.font_small.render(f"测量时间：{elapsed:0.1f} 秒", True, MUTED)
         self.screen.blit(elapsed_surface, (rect.right - elapsed_surface.get_width() - 20, rect.bottom - 22))
 
+        if state.camera_visible and state.camera_view_mode == "small":
+            self._draw_camera_thumbnail(rect, state)
+
     def _draw_camera(self, rect: pygame.Rect, state: DeviceState) -> None:
         pygame.draw.rect(self.screen, PANEL, rect, border_radius=6)
-        self._text("转盘定位画面", self.font_heading, TEXT, rect.x + 16, rect.y + 13)
+        self._text("USB实时摄像", self.font_heading, TEXT, rect.x + 16, rect.y + 13)
 
         status_text = "USB CAMERA · LIVE" if state.camera_ready else "USB CAMERA"
         status_color = ACCENT if state.camera_ready else WARN
@@ -419,6 +598,77 @@ class MainView:
             rect.width - 36,
             rect.height - 75,
         )
+        self._draw_camera_frame(viewport, state, compact=False)
+
+        overlay = pygame.Rect(
+            viewport.x,
+            viewport.bottom - 42,
+            viewport.width,
+            42,
+        )
+        overlay_surface = pygame.Surface(overlay.size, pygame.SRCALPHA)
+        overlay_surface.fill((0, 0, 0, 170))
+        self.screen.blit(overlay_surface, overlay.topleft)
+        overlay_text = (
+            f"转动中 → {state.lamp_name}  {state.motor_target_deg:.2f}°"
+            if state.motor_moving
+            else f"实时观察 · {state.camera_view_name}"
+        )
+        self._text(
+            overlay_text,
+            self.font_body,
+            TEXT,
+            overlay.x + 14,
+            overlay.y + 10,
+            max_width=overlay.width - 28,
+        )
+
+    def _draw_camera_thumbnail(
+        self,
+        chart_rect: pygame.Rect,
+        state: DeviceState,
+    ) -> None:
+        plot_area = pygame.Rect(
+            chart_rect.x + 20,
+            chart_rect.y + 60,
+            chart_rect.width - 40,
+            chart_rect.height - 122,
+        )
+        viewport = pygame.Rect(
+            plot_area.x,
+            plot_area.y,
+            max(1, plot_area.width // 2),
+            max(1, plot_area.height // 2),
+        )
+        self._draw_camera_frame(viewport, state, compact=True)
+        pygame.draw.rect(self.screen, ACCENT_DARK, viewport, width=2, border_radius=4)
+
+        status_bar = pygame.Rect(viewport.x + 2, viewport.y + 2, viewport.width - 4, 27)
+        status_surface = pygame.Surface(status_bar.size, pygame.SRCALPHA)
+        status_surface.fill((0, 0, 0, 178))
+        self.screen.blit(status_surface, status_bar.topleft)
+        status_color = ACCENT if state.camera_ready else WARN
+        pygame.draw.circle(
+            self.screen,
+            status_color,
+            (status_bar.x + 13, status_bar.centery),
+            4,
+        )
+        self._text(
+            "MF500 · LIVE" if state.camera_ready else "MF500 · CONNECTING",
+            self.font_small,
+            TEXT,
+            status_bar.x + 23,
+            status_bar.y + 5,
+            max_width=status_bar.width - 31,
+        )
+
+    def _draw_camera_frame(
+        self,
+        viewport: pygame.Rect,
+        state: DeviceState,
+        compact: bool,
+    ) -> None:
         pygame.draw.rect(self.screen, PANEL_DARK, viewport, border_radius=4)
 
         frame_width, frame_height = state.camera_frame_size
@@ -448,31 +698,18 @@ class MainView:
             else:
                 self._center_text(
                     "摄像头帧格式错误",
-                    self.font_heading,
+                    self.font_small if compact else self.font_heading,
                     WARN,
                     viewport,
                 )
         else:
             message = "摄像头连接中..." if not state.camera_error else "摄像头暂不可用"
-            self._center_text(message, self.font_heading, WARN, viewport)
-
-        overlay = pygame.Rect(
-            viewport.x,
-            viewport.bottom - 42,
-            viewport.width,
-            42,
-        )
-        overlay_surface = pygame.Surface(overlay.size, pygame.SRCALPHA)
-        overlay_surface.fill((0, 0, 0, 170))
-        self.screen.blit(overlay_surface, overlay.topleft)
-        self._text(
-            f"转动中 → {state.lamp_name}  {state.motor_target_deg:.2f}°",
-            self.font_body,
-            TEXT,
-            overlay.x + 14,
-            overlay.y + 10,
-            max_width=overlay.width - 28,
-        )
+            self._center_text(
+                message,
+                self.font_small if compact else self.font_heading,
+                WARN,
+                viewport,
+            )
 
     def _draw_plot_grid(self, plot: pygame.Rect) -> None:
         pygame.draw.rect(self.screen, PANEL_DARK, plot, border_radius=4)

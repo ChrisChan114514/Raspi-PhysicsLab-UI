@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import time
 from collections.abc import Callable
 
@@ -7,7 +8,9 @@ from .analysis import FilterResult, SpikeRejectingVoltageFilter
 from .hardware import HardwareBundle, VoltageReading
 from .input import Button, ButtonEvent
 from .state import (
+    CAMERA_VIEW_MODES,
     CONTROL_ITEMS,
+    DEFAULT_LAMP_ANGLES_DEG,
     LAMP_NAMES,
     UV_LAMP_INDEX,
     DeviceState,
@@ -21,15 +24,23 @@ class ExperimentController:
         hardware: HardwareBundle,
         state: DeviceState,
         lamp_selector: Callable[[int], None] | None = None,
+        angle_selector: Callable[[int, float], None] | None = None,
+        offset_saver: Callable[[float], None] | None = None,
     ) -> None:
         self.hardware = hardware
         self.state = state
         self._lamp_selector = lamp_selector or hardware.stepper.select_lamp
+        self._angle_selector = angle_selector
+        self._offset_saver = offset_saver or hardware.stepper.save_lamp_angle_offset
         self.voltage_filter = SpikeRejectingVoltageFilter()
 
     def handle_button(self, event: ButtonEvent) -> None:
         self.state.last_button = event.button.value
         self.state.last_key = event.key
+
+        if self.state.motor_adjustment_active:
+            self._handle_motor_adjustment_key(event.key)
+            return
 
         if event.button == Button.SELECT_PREVIOUS:
             self.state.selected_control = (self.state.selected_control - 1) % len(CONTROL_ITEMS)
@@ -47,6 +58,8 @@ class ExperimentController:
             self.set_intensity(self.state.intensity_percent - 5)
         elif event.button == Button.CLEAR_CURVE:
             self.clear_curve()
+        elif event.button == Button.TOGGLE_CAMERA:
+            self.toggle_camera()
         elif event.button == Button.TOGGLE_MEASUREMENT:
             self.toggle_measurement()
         elif event.button == Button.TOGGLE_FFT:
@@ -56,14 +69,21 @@ class ExperimentController:
     def _adjust_selected(self, direction: int) -> None:
         selected = self.state.selected_name
         if selected == "lamp":
-            self.set_lamp_arrow_focus(direction)
+            self.set_lamp_focus(direction)
         elif selected == "intensity":
             self.set_intensity(self.state.intensity_percent + direction * 5)
-        elif selected == "measurement":
-            self.state.status = "测量开始或暂停请按 #"
+        elif selected == "camera":
+            self.set_camera_view_mode("small" if direction < 0 else "full")
 
-    def set_lamp_arrow_focus(self, direction: int) -> None:
-        self.state.lamp_arrow_focus = -1 if direction < 0 else 1
+    def set_lamp_focus(self, direction: int) -> None:
+        step = -1 if direction < 0 else 1
+        self.state.lamp_arrow_focus = max(
+            -1,
+            min(1, self.state.lamp_arrow_focus + step),
+        )
+        if self.state.lamp_arrow_focus == 0:
+            self.state.status = f"已选{self.state.lamp_name}，按 A 手动调节角度"
+            return
         target_index = (self.state.lamp_index + self.state.lamp_arrow_focus) % len(
             LAMP_NAMES
         )
@@ -73,9 +93,13 @@ class ExperimentController:
     def confirm_selected(self) -> None:
         selected = self.state.selected_name
         if selected == "lamp":
-            self.select_lamp(self.state.lamp_index + self.state.lamp_arrow_focus)
-        elif selected == "measurement":
-            self.state.status = "A 键不控制测量，请按 # 开始或暂停"
+            if self.state.lamp_arrow_focus == 0:
+                self.enter_motor_adjustment()
+            else:
+                self.select_lamp(self.state.lamp_index + self.state.lamp_arrow_focus)
+                self.state.lamp_arrow_focus = 0
+        elif selected == "camera":
+            self.toggle_camera()
         else:
             self.state.status = "当前参数已选中，可用 4 / 6 调整"
 
@@ -95,8 +119,15 @@ class ExperimentController:
         self.state.motor_moving = True
         self.state.motor_ready = False
         self.state.motor_error = ""
+        self._prepare_auto_camera()
         self.sync_light_output()
-        self._lamp_selector(self.state.lamp_index)
+        if self._angle_selector is None:
+            self._lamp_selector(self.state.lamp_index)
+        else:
+            self._angle_selector(
+                self.state.lamp_index,
+                self.state.motor_target_deg,
+            )
         self.state.status = (
             f"正在旋转至：{self.state.lamp_name} "
             f"({self.state.motor_target_deg:.2f}°)"
@@ -110,6 +141,144 @@ class ExperimentController:
 
     def toggle_measurement(self) -> None:
         self.set_measurement(not self.state.measuring)
+
+    def toggle_camera(self) -> None:
+        self.set_camera_enabled(not self.state.camera_enabled)
+
+    def set_camera_enabled(self, enabled: bool) -> None:
+        self.state.camera_enabled = bool(enabled)
+        self.state.camera_ready = False
+        self.state.camera_frame_rgb = None
+        self.state.camera_frame_size = (0, 0)
+        self.state.camera_frame_at_s = 0.0
+        self.state.camera_error = ""
+        if self.state.camera_enabled:
+            self.state.status = f"USB摄像已开启：{self.state.camera_view_name}"
+        elif self.state.camera_auto_visible:
+            self.state.status = "常驻摄像已关闭，电机调节期间自动显示"
+        else:
+            self.state.status = "USB摄像已关闭"
+
+    def set_camera_view_mode(self, mode: str) -> None:
+        if mode not in CAMERA_VIEW_MODES:
+            raise ValueError(f"unsupported camera view mode: {mode}")
+        self.state.camera_view_mode = mode
+        self.state.status = f"摄像画面：{self.state.camera_view_name}"
+
+    def enter_motor_adjustment(self) -> None:
+        if self.state.motor_moving:
+            self.state.status = "电机正在转动，请到位后再手动调节"
+            return
+        self.state.motor_adjustment_active = True
+        self._prepare_auto_camera()
+        self.state.motor_adjustment_input = self._format_angle(
+            self.state.motor_target_deg
+        )
+        self.state.motor_adjustment_replace_input = True
+        self.state.motor_adjustment_error = ""
+        self.state.status = f"手动调节：{self.state.lamp_name}"
+
+    def _handle_motor_adjustment_key(self, key: str) -> None:
+        if key == "#":
+            self._save_motor_adjustment()
+            return
+        if key in {"A", "B", "C", "D"}:
+            delta_by_key = {
+                "A": 0.1,
+                "B": -0.1,
+                "C": 0.5,
+                "D": -0.5,
+            }
+            self._apply_manual_angle(
+                self.state.motor_target_deg + delta_by_key[key]
+            )
+            self.state.motor_adjustment_input = self._format_angle(
+                self.state.motor_target_deg
+            )
+            self.state.motor_adjustment_replace_input = True
+            return
+        if key == "*":
+            if self.state.motor_adjustment_replace_input:
+                self.state.motor_adjustment_input = "0."
+                self.state.motor_adjustment_replace_input = False
+            elif "." not in self.state.motor_adjustment_input:
+                self.state.motor_adjustment_input += "."
+            return
+        if len(key) != 1 or not key.isdigit():
+            return
+
+        if self.state.motor_adjustment_replace_input:
+            value_text = key
+            self.state.motor_adjustment_replace_input = False
+        else:
+            value_text = self.state.motor_adjustment_input + key
+        if len(value_text) > 10:
+            self.state.motor_adjustment_error = "输入值过长"
+            return
+        self.state.motor_adjustment_input = value_text
+        self._apply_manual_input()
+
+    def _apply_manual_input(self) -> None:
+        try:
+            angle_deg = float(self.state.motor_adjustment_input)
+        except ValueError:
+            return
+        self._apply_manual_angle(angle_deg)
+
+    def _apply_manual_angle(self, target_angle_deg: float) -> None:
+        if not math.isfinite(target_angle_deg):
+            self.state.motor_adjustment_error = "角度必须是有限数值"
+            return
+        offset_deg = (
+            target_angle_deg
+            - DEFAULT_LAMP_ANGLES_DEG[self.state.lamp_index]
+        )
+        self.state.lamp_angle_offset_deg = offset_deg
+        self.state.lamp_angles_deg = tuple(
+            base_angle + offset_deg
+            for base_angle in DEFAULT_LAMP_ANGLES_DEG
+        )
+        self.state.motor_target_deg = target_angle_deg
+        self.state.motor_moving = True
+        self.state.motor_ready = False
+        self.state.motor_error = ""
+        self.state.motor_adjustment_error = ""
+        self.sync_light_output()
+        if self._angle_selector is None:
+            self.hardware.stepper.move_to_angle(target_angle_deg)
+        else:
+            self._angle_selector(self.state.lamp_index, target_angle_deg)
+        self.state.status = (
+            f"实时调节：{self.state.lamp_name} {target_angle_deg:.3f}°"
+        )
+
+    def _save_motor_adjustment(self) -> None:
+        try:
+            self._offset_saver(self.state.lamp_angle_offset_deg)
+        except Exception as exc:
+            self.state.motor_adjustment_error = f"保存失败：{exc}"
+            self.state.status = self.state.motor_adjustment_error
+            return
+        self.state.motor_adjustment_active = False
+        self.state.motor_adjustment_replace_input = True
+        self.state.motor_adjustment_error = ""
+        self.state.lamp_arrow_focus = 0
+        self.state.status = (
+            f"已保存装配偏移：{self.state.lamp_angle_offset_deg:+.3f}°"
+        )
+
+    def _prepare_auto_camera(self) -> None:
+        if self.state.camera_enabled:
+            return
+        self.state.camera_ready = False
+        self.state.camera_frame_rgb = None
+        self.state.camera_frame_size = (0, 0)
+        self.state.camera_frame_at_s = 0.0
+        self.state.camera_error = ""
+
+    @staticmethod
+    def _format_angle(angle_deg: float) -> str:
+        return f"{angle_deg:.3f}".rstrip("0").rstrip(".")
 
     def clear_curve(self) -> None:
         self.state.clear_samples()
