@@ -199,6 +199,9 @@ def run_app(config: AppConfig) -> int:
                         )
                 elif message.kind == "error":
                     state.camera_ready = False
+                    state.camera_frame_rgb = None
+                    state.camera_frame_size = (0, 0)
+                    state.camera_frame_at_s = 0.0
                     state.camera_error = message.error
                     if config.debug_camera:
                         print(f"[CAMERA ERROR] {message.error}", flush=True)

@@ -342,7 +342,11 @@ class OpenCVUSBCameraSource(CameraSource):
         if not driver_path.is_file():
             raise FileNotFoundError(f"未找到 USB 摄像头驱动：{driver_path}")
         sys.path.insert(0, str(camera_dir))
-        from usb_camera import USBCamera, USBCameraConfig  # noqa: PLC0415
+        from usb_camera import (  # noqa: PLC0415
+            USBCamera,
+            USBCameraConfig,
+            USBCameraError,
+        )
 
         self._camera = USBCamera(
             USBCameraConfig(
@@ -353,10 +357,20 @@ class OpenCVUSBCameraSource(CameraSource):
                 debug=debug,
             )
         )
-        self._camera.open()
+        self._camera_error = USBCameraError
 
     def read(self) -> CameraReading:
-        frame = self._camera.read()
+        try:
+            if self._camera.is_open:
+                frame = self._camera.read()
+            else:
+                # Open and capture in the poller thread. Some V4L2/OpenCV
+                # builds do not behave reliably when opened in one thread and
+                # read continuously from another.
+                frame = self._camera.open()
+        except self._camera_error:
+            self._camera.close()
+            raise
         return CameraReading(
             width=frame.width,
             height=frame.height,

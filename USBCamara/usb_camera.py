@@ -126,7 +126,6 @@ class USBCamera:
         self.config = config or USBCameraConfig()
         self.config.validate()
         self._capture = None
-        self._pending_frame: USBCameraFrame | None = None
         self._device_path: str | None = None
 
     @property
@@ -139,8 +138,6 @@ class USBCamera:
 
     def open(self) -> USBCameraFrame:
         if self.is_open:
-            if self._pending_frame is not None:
-                return self._pending_frame
             return self.read()
         if cv2 is None:
             raise USBCameraError(
@@ -150,6 +147,7 @@ class USBCamera:
         candidates = self._matching_devices()
         errors: list[str] = []
         for device in candidates:
+            opened = False
             try:
                 device_index = opencv_device_index(device)
             except USBCameraError as exc:
@@ -182,7 +180,7 @@ class USBCamera:
                     ok, frame_bgr = capture.read()
                     if ok and frame_bgr is not None and frame_bgr.size:
                         frame = self._to_rgb_frame(frame_bgr)
-                        self._pending_frame = frame
+                        opened = True
                         self._debug(
                             f"opened {device} name='{REQUIRED_CAMERA_NAME}' "
                             f"frame={frame.width}x{frame.height} "
@@ -194,7 +192,7 @@ class USBCamera:
             except Exception as exc:
                 errors.append(f"{device}: {exc}")
             finally:
-                if self._pending_frame is None:
+                if not opened:
                     capture.release()
                     self._capture = None
                     self._device_path = None
@@ -205,22 +203,24 @@ class USBCamera:
         )
 
     def read(self) -> USBCameraFrame:
-        if self._pending_frame is not None:
-            frame = self._pending_frame
-            self._pending_frame = None
-            return frame
         if not self.is_open:
             raise USBCameraError("USB camera is not open")
 
-        ok, frame_bgr = self._capture.read()
-        if not ok or frame_bgr is None or not frame_bgr.size:
+        try:
+            ok, frame_bgr = self._capture.read()
+            if not ok or frame_bgr is None or not frame_bgr.size:
+                raise USBCameraError(
+                    f"USB camera returned an empty frame: {self._device_path}"
+                )
+            return self._to_rgb_frame(frame_bgr)
+        except USBCameraError:
+            raise
+        except Exception as exc:
             raise USBCameraError(
-                f"USB camera returned an empty frame: {self._device_path}"
-            )
-        return self._to_rgb_frame(frame_bgr)
+                f"USB camera frame capture failed: {self._device_path}: {exc}"
+            ) from exc
 
     def close(self) -> None:
-        self._pending_frame = None
         if self._capture is not None:
             self._capture.release()
             self._capture = None
