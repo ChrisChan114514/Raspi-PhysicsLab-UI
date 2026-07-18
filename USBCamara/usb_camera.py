@@ -22,6 +22,14 @@ class USBCameraError(RuntimeError):
 REQUIRED_CAMERA_NAME = "MF500 camera"
 
 
+def opencv_device_index(device: str) -> int:
+    """Convert a Linux V4L2 node path to the index OpenCV expects."""
+    match = re.fullmatch(r"/dev/video(\d+)", device)
+    if match is None:
+        raise USBCameraError(f"unsupported V4L2 video node path: {device}")
+    return int(match.group(1))
+
+
 @dataclass(frozen=True)
 class VideoDeviceInfo:
     device: str
@@ -142,7 +150,15 @@ class USBCamera:
         candidates = self._matching_devices()
         errors: list[str] = []
         for device in candidates:
-            capture = cv2.VideoCapture(device, cv2.CAP_V4L2)
+            try:
+                device_index = opencv_device_index(device)
+            except USBCameraError as exc:
+                errors.append(f"{device}: {exc}")
+                continue
+
+            # OpenCV's V4L2 backend on Raspberry Pi accepts a numeric camera
+            # index here; passing '/dev/videoN' is treated as a filename.
+            capture = cv2.VideoCapture(device_index, cv2.CAP_V4L2)
             if not capture.isOpened():
                 capture.release()
                 errors.append(f"{device}: cannot open")
