@@ -7,6 +7,8 @@ from dataclasses import dataclass
 
 from .hardware import (
     ButtonReader,
+    CameraReading,
+    CameraSource,
     PhotocurrentSensor,
     StepperMotor,
     StepperMoveResult,
@@ -161,6 +163,76 @@ class VoltagePollerThread:
             except Exception as exc:  # pragma: no cover - hardware path
                 self.messages.put(SensorWorkerMessage(kind="error", error=str(exc)))
                 self._stop_event.wait(0.5)
+
+            elapsed = time.monotonic() - started
+            remaining = self.period_s - elapsed
+            if remaining > 0:
+                self._stop_event.wait(remaining)
+
+
+@dataclass(frozen=True)
+class CameraWorkerMessage:
+    kind: str
+    frame: CameraReading | None = None
+    error: str = ""
+
+
+class CameraPollerThread:
+    def __init__(self, camera: CameraSource, capture_hz: float) -> None:
+        if capture_hz <= 0:
+            raise ValueError("capture_hz must be positive")
+        self.camera = camera
+        self.period_s = 1.0 / capture_hz
+        self.messages: queue.Queue[CameraWorkerMessage] = queue.Queue(maxsize=1)
+        self._stop_event = threading.Event()
+        self._thread = threading.Thread(
+            target=self._run,
+            name="usb-camera-poller",
+            daemon=True,
+        )
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop_event.set()
+        if self._thread.is_alive():
+            self._thread.join(timeout=2.0)
+        if self._thread.is_alive():
+            try:
+                self.camera.close()
+            finally:
+                self._thread.join(timeout=2.0)
+
+    def drain(self) -> list[CameraWorkerMessage]:
+        messages: list[CameraWorkerMessage] = []
+        while True:
+            try:
+                messages.append(self.messages.get_nowait())
+            except queue.Empty:
+                return messages
+
+    def _publish(self, message: CameraWorkerMessage) -> None:
+        while True:
+            try:
+                self.messages.put_nowait(message)
+                return
+            except queue.Full:
+                try:
+                    self.messages.get_nowait()
+                except queue.Empty:
+                    pass
+
+    def _run(self) -> None:
+        while not self._stop_event.is_set():
+            started = time.monotonic()
+            try:
+                frame = self.camera.read()
+                self._publish(CameraWorkerMessage(kind="frame", frame=frame))
+            except Exception as exc:  # pragma: no cover - hardware path
+                self._publish(CameraWorkerMessage(kind="error", error=str(exc)))
+                if self._stop_event.wait(0.5):
+                    break
 
             elapsed = time.monotonic() - started
             remaining = self.period_s - elapsed

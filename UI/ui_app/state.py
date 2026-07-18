@@ -25,10 +25,14 @@ class DeviceState:
     lamp_arrow_focus: int = 1
     lamp_index: int = 0
     active_lamp_index: int = 0
-    intensity_percent: int = 30
-    measuring: bool = False
+    intensity_percent: int = 100
+    measuring: bool = True
     light_on: bool = False
     camera_ready: bool = False
+    camera_frame_rgb: bytes | None = None
+    camera_frame_size: tuple[int, int] = (0, 0)
+    camera_frame_at_s: float = 0.0
+    camera_error: str = ""
     last_button: str = "NONE"
     last_key: str = ""
     status: str = "设备就绪"

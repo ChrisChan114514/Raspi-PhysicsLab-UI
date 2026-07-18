@@ -8,9 +8,14 @@ from .config import AppConfig
 from .controller import ExperimentController
 from .hardware import create_hardware
 from .input import Button, ButtonEvent
-from .state import DeviceState
+from .state import UV_LAMP_INDEX, DeviceState
 from .view import MainView
-from .workers import ButtonPollerThread, MotorWorkerThread, VoltagePollerThread
+from .workers import (
+    ButtonPollerThread,
+    CameraPollerThread,
+    MotorWorkerThread,
+    VoltagePollerThread,
+)
 
 
 KEY_TO_BUTTON = {
@@ -34,6 +39,7 @@ def run_app(config: AppConfig) -> int:
     pygame.init()
     hardware = None
     button_worker = None
+    camera_worker = None
     motor_worker = None
     voltage_worker = None
     try:
@@ -48,48 +54,60 @@ def run_app(config: AppConfig) -> int:
             config.ads1256_dir,
             config.motor_dir,
             config.led_dir,
+            config.camera_dir,
             motor_port=config.motor_port,
             motor_speed_rpm=config.motor_speed_rpm,
             motor_acceleration=config.motor_acceleration,
             motor_pulses_per_revolution=config.motor_pulses_per_revolution,
             led_pwm_frequency_hz=config.led_pwm_frequency_hz,
             led_active_low=config.led_active_low,
+            camera_device=config.camera_device,
+            camera_width=config.camera_width,
+            camera_height=config.camera_height,
+            camera_fps=config.camera_fps,
             debug_motor=config.debug_motor,
             debug_led=config.debug_led,
+            debug_camera=config.debug_camera,
         )
         state = DeviceState(lamp_angles_deg=hardware.stepper.lamp_angles_deg)
         state.motor_position_deg = hardware.stepper.position_deg
-        initial_lamp = min(
+        nearest_lamp = min(
             range(len(state.lamp_angles_deg)),
             key=lambda index: abs(
                 state.motor_position_deg - state.lamp_angles_deg[index]
             ),
         )
-        state.lamp_index = initial_lamp
-        state.active_lamp_index = initial_lamp
-        state.motor_target_deg = state.lamp_angles_deg[initial_lamp]
+        state.active_lamp_index = nearest_lamp
+        state.lamp_index = UV_LAMP_INDEX
+        state.motor_target_deg = state.lamp_angles_deg[UV_LAMP_INDEX]
         state.motor_ready = (
             abs(state.motor_position_deg - state.motor_target_deg) <= 0.5
         )
-        state.status = (
-            f"电机已连接：{state.motor_position_deg:.2f}°"
-            if state.motor_ready
-            else f"电机待定位：{state.motor_position_deg:.2f}°"
-        )
+        state.started_at_s = time.monotonic()
+        hardware.light.set_intensity(state.intensity_percent)
         motor_worker = MotorWorkerThread(hardware.stepper)
         controller = ExperimentController(
             hardware,
             state,
             lamp_selector=motor_worker.select_lamp,
         )
-        controller.sync_light_output()
+        if state.motor_ready:
+            controller.sync_light_output()
+            state.status = "正在测量：紫外光已到位"
+        else:
+            controller.select_lamp(UV_LAMP_INDEX)
         view = MainView(screen, config.font_dir)
         button_worker = ButtonPollerThread(hardware.buttons, poll_hz=config.button_poll_hz)
+        camera_worker = CameraPollerThread(
+            hardware.camera,
+            capture_hz=config.camera_fps,
+        )
         voltage_worker = VoltagePollerThread(
             hardware.photocurrent,
             sample_hz=config.voltage_sample_hz,
         )
         button_worker.start()
+        camera_worker.start()
         motor_worker.start()
         voltage_worker.start()
         if config.debug_buttons:
@@ -162,6 +180,29 @@ def run_app(config: AppConfig) -> int:
                     if config.debug_buttons:
                         print(f"[BUTTON ERROR] {message.error}", flush=True)
 
+            for message in camera_worker.drain():
+                if message.kind == "frame" and message.frame is not None:
+                    first_frame = state.camera_frame_rgb is None
+                    state.camera_ready = True
+                    state.camera_frame_rgb = message.frame.rgb_bytes
+                    state.camera_frame_size = (
+                        message.frame.width,
+                        message.frame.height,
+                    )
+                    state.camera_frame_at_s = message.frame.captured_at_s
+                    state.camera_error = ""
+                    if config.debug_camera and first_frame:
+                        print(
+                            f"[CAMERA FRAME] size={message.frame.width}x"
+                            f"{message.frame.height}",
+                            flush=True,
+                        )
+                elif message.kind == "error":
+                    state.camera_ready = False
+                    state.camera_error = message.error
+                    if config.debug_camera:
+                        print(f"[CAMERA ERROR] {message.error}", flush=True)
+
             voltage_worker.set_context(state.active_lamp_index, state.intensity_percent)
             voltage_worker.set_enabled(state.measuring)
             for message in voltage_worker.drain():
@@ -227,6 +268,8 @@ def run_app(config: AppConfig) -> int:
                 print(f"[LED CLOSE ERROR] {exc}", flush=True)
         if motor_worker is not None:
             motor_worker.stop()
+        if camera_worker is not None:
+            camera_worker.stop()
         if voltage_worker is not None:
             voltage_worker.stop()
         if button_worker is not None:

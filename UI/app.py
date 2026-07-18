@@ -39,6 +39,11 @@ def parse_args() -> argparse.Namespace:
         help="在终端打印紫外灯 PWM 输出状态",
     )
     parser.add_argument(
+        "--debug-camera",
+        action="store_true",
+        help="在终端打印 USB 摄像头连接和帧错误",
+    )
+    parser.add_argument(
         "--motor-port",
         default=None,
         help="指定电机串口，例如 /dev/serial0；默认使用树莓派 GPIO UART /dev/serial0",
@@ -72,6 +77,29 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="紫外灯驱动输入为低电平有效",
     )
+    parser.add_argument(
+        "--camera-device",
+        default=None,
+        help="可选 MF500 节点；即使指定路径也会严格验证设备名称",
+    )
+    parser.add_argument(
+        "--camera-width",
+        type=int,
+        default=640,
+        help="USB 摄像头请求宽度，默认 640",
+    )
+    parser.add_argument(
+        "--camera-height",
+        type=int,
+        default=480,
+        help="USB 摄像头请求高度，默认 480",
+    )
+    parser.add_argument(
+        "--camera-fps",
+        type=float,
+        default=15.0,
+        help="USB 摄像头采集帧率，默认 15",
+    )
     return parser.parse_args()
 
 
@@ -84,12 +112,17 @@ def main() -> int:
         debug_sensor=args.debug_sensor,
         debug_motor=args.debug_motor,
         debug_led=args.debug_led,
+        debug_camera=args.debug_camera,
         motor_port=args.motor_port,
         motor_speed_rpm=args.motor_speed,
         motor_acceleration=args.motor_acceleration,
         motor_pulses_per_revolution=args.motor_pulses_per_revolution,
         led_pwm_frequency_hz=args.led_pwm_frequency,
         led_active_low=args.led_active_low,
+        camera_device=args.camera_device,
+        camera_width=args.camera_width,
+        camera_height=args.camera_height,
+        camera_fps=args.camera_fps,
     )
     return run_app(config)
 

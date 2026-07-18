@@ -16,12 +16,17 @@ class AppConfig:
     debug_sensor: bool = False
     debug_motor: bool = False
     debug_led: bool = False
+    debug_camera: bool = False
     motor_port: str | None = None
     motor_speed_rpm: int = 60
     motor_acceleration: int = 50
     motor_pulses_per_revolution: int = 3200
     led_pwm_frequency_hz: float = 1000.0
     led_active_low: bool = False
+    camera_device: str | None = None
+    camera_width: int = 640
+    camera_height: int = 480
+    camera_fps: float = 15.0
 
     @property
     def keypad_dir(self) -> Path:
@@ -42,3 +47,7 @@ class AppConfig:
     @property
     def led_dir(self) -> Path:
         return self.project_root / "LED"
+
+    @property
+    def camera_dir(self) -> Path:
+        return self.project_root / "USBCamara"

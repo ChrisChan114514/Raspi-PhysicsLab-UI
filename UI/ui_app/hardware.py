@@ -230,7 +230,7 @@ class LightController:
 
 class SimulatedLightController(LightController):
     def __init__(self) -> None:
-        self.intensity_percent = 30
+        self.intensity_percent = 100
         self._enabled = False
 
     @property
@@ -253,7 +253,7 @@ class RaspberryPiPwmLightController(LightController):
         led_dir: Path,
         frequency_hz: float = 1000.0,
         active_high: bool = True,
-        initial_intensity_percent: int = 30,
+        initial_intensity_percent: int = 100,
         debug: bool = False,
     ) -> None:
         driver_path = led_dir / "led_pwm.py"
@@ -286,6 +286,86 @@ class RaspberryPiPwmLightController(LightController):
 
     def close(self) -> None:
         self._led.close()
+
+
+@dataclass(frozen=True)
+class CameraReading:
+    width: int
+    height: int
+    rgb_bytes: bytes
+    captured_at_s: float
+
+
+class CameraSource(ABC):
+    @abstractmethod
+    def read(self) -> CameraReading:
+        raise NotImplementedError
+
+    def close(self) -> None:
+        return None
+
+
+class SimulatedCameraSource(CameraSource):
+    def __init__(self, width: int = 320, height: int = 180) -> None:
+        self.width = width
+        self.height = height
+        pixels = bytearray(width * height * 3)
+        for y in range(height):
+            for x in range(width):
+                offset = (y * width + x) * 3
+                band = (x // 40 + y // 30) % 2
+                pixels[offset] = 34 if band else 18
+                pixels[offset + 1] = 116 if band else 62
+                pixels[offset + 2] = 102 if band else 72
+        self._rgb_bytes = bytes(pixels)
+
+    def read(self) -> CameraReading:
+        return CameraReading(
+            width=self.width,
+            height=self.height,
+            rgb_bytes=self._rgb_bytes,
+            captured_at_s=time.monotonic(),
+        )
+
+
+class OpenCVUSBCameraSource(CameraSource):
+    def __init__(
+        self,
+        camera_dir: Path,
+        device: str | None = None,
+        width: int = 640,
+        height: int = 480,
+        fps: float = 15.0,
+        debug: bool = False,
+    ) -> None:
+        driver_path = camera_dir / "usb_camera.py"
+        if not driver_path.is_file():
+            raise FileNotFoundError(f"未找到 USB 摄像头驱动：{driver_path}")
+        sys.path.insert(0, str(camera_dir))
+        from usb_camera import USBCamera, USBCameraConfig  # noqa: PLC0415
+
+        self._camera = USBCamera(
+            USBCameraConfig(
+                device=device,
+                width=width,
+                height=height,
+                fps=fps,
+                debug=debug,
+            )
+        )
+        self._camera.open()
+
+    def read(self) -> CameraReading:
+        frame = self._camera.read()
+        return CameraReading(
+            width=frame.width,
+            height=frame.height,
+            rgb_bytes=frame.rgb_bytes,
+            captured_at_s=frame.captured_at_s,
+        )
+
+    def close(self) -> None:
+        self._camera.close()
 
 
 @dataclass(frozen=True)
@@ -393,23 +473,28 @@ class HardwareBundle:
         photocurrent_sensor: PhotocurrentSensor,
         stepper_motor: StepperMotor,
         light_controller: LightController,
+        camera_source: CameraSource,
     ) -> None:
         self.buttons = button_reader
         self.photocurrent = photocurrent_sensor
         self.stepper = stepper_motor
         self.light = light_controller
+        self.camera = camera_source
 
     def close(self) -> None:
         try:
             self.light.close()
         finally:
             try:
-                self.stepper.close()
+                self.camera.close()
             finally:
                 try:
-                    self.photocurrent.close()
+                    self.stepper.close()
                 finally:
-                    self.buttons.close()
+                    try:
+                        self.photocurrent.close()
+                    finally:
+                        self.buttons.close()
 
 
 def create_hardware(
@@ -418,18 +503,25 @@ def create_hardware(
     ads1256_dir: Path,
     motor_dir: Path,
     led_dir: Path,
+    camera_dir: Path,
     motor_port: str | None = None,
     motor_speed_rpm: int = 60,
     motor_acceleration: int = 50,
     motor_pulses_per_revolution: int = 3200,
     led_pwm_frequency_hz: float = 1000.0,
     led_active_low: bool = False,
+    camera_device: str | None = None,
+    camera_width: int = 640,
+    camera_height: int = 480,
+    camera_fps: float = 15.0,
     debug_motor: bool = False,
     debug_led: bool = False,
+    debug_camera: bool = False,
 ) -> HardwareBundle:
     if backend == "hardware":
         buttons = MatrixKeypadButtonReader(keypad_dir=keypad_dir)
         light = None
+        camera = None
         sensor = None
         stepper = None
         try:
@@ -438,6 +530,14 @@ def create_hardware(
                 frequency_hz=led_pwm_frequency_hz,
                 active_high=not led_active_low,
                 debug=debug_led,
+            )
+            camera = OpenCVUSBCameraSource(
+                camera_dir=camera_dir,
+                device=camera_device,
+                width=camera_width,
+                height=camera_height,
+                fps=camera_fps,
+                debug=debug_camera,
             )
             sensor = ADS1256PhotocurrentSensor(ads1256_dir=ads1256_dir)
             stepper = EMMV5StepperMotor(
@@ -449,7 +549,7 @@ def create_hardware(
                 debug=debug_motor,
             )
         except Exception:
-            for device in (light, stepper, sensor, buttons):
+            for device in (light, camera, stepper, sensor, buttons):
                 if device is None:
                     continue
                 try:
@@ -457,7 +557,7 @@ def create_hardware(
                 except Exception as cleanup_error:
                     print(f"[HARDWARE CLEANUP ERROR] {cleanup_error}", flush=True)
             raise
-        return HardwareBundle(buttons, sensor, stepper, light)
+        return HardwareBundle(buttons, sensor, stepper, light, camera)
     sys.path.insert(0, str(motor_dir))
     from motor_config import load_motor_parameters  # noqa: PLC0415
 
@@ -467,4 +567,5 @@ def create_hardware(
         SimulatedPhotocurrentSensor(),
         SimulatedStepperMotor(motor_parameters.lamp_angles_deg),
         SimulatedLightController(),
+        SimulatedCameraSource(),
     )

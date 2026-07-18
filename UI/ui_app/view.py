@@ -225,9 +225,16 @@ class MainView:
 
         camera_rect = pygame.Rect(rect.x + 12, item_y + 2, rect.width - 24, 50)
         pygame.draw.rect(self.screen, PANEL_DARK, camera_rect, border_radius=5)
-        self._text("红外监控", self.font_small, MUTED, camera_rect.x + 14, camera_rect.y + 15)
-        camera_text = "已就绪" if state.camera_ready else "待接入"
-        camera_color = ACCENT if state.camera_ready else WARN
+        self._text("USB摄像头", self.font_small, MUTED, camera_rect.x + 14, camera_rect.y + 15)
+        if state.camera_ready:
+            camera_text = "已连接"
+            camera_color = ACCENT
+        elif state.camera_error:
+            camera_text = "异常"
+            camera_color = WARN
+        else:
+            camera_text = "连接中"
+            camera_color = MUTED
         self._text(camera_text, self.font_body, camera_color, camera_rect.right - 78, camera_rect.y + 13)
 
         if state.selected_name == "lamp":
@@ -340,6 +347,10 @@ class MainView:
         pygame.draw.polygon(self.screen, TEXT if focused else MUTED, points)
 
     def _draw_chart(self, rect: pygame.Rect, state: DeviceState) -> None:
+        if state.motor_moving:
+            self._draw_camera(rect, state)
+            return
+
         pygame.draw.rect(self.screen, PANEL, rect, border_radius=6)
         self._text("光电流实时曲线（IN0）", self.font_heading, TEXT, rect.x + 16, rect.y + 13)
         latest = state.samples[-1].voltage_mv if state.samples else 0.0
@@ -389,6 +400,79 @@ class MainView:
         )
         elapsed_surface = self.font_small.render(f"测量时间：{elapsed:0.1f} 秒", True, MUTED)
         self.screen.blit(elapsed_surface, (rect.right - elapsed_surface.get_width() - 20, rect.bottom - 22))
+
+    def _draw_camera(self, rect: pygame.Rect, state: DeviceState) -> None:
+        pygame.draw.rect(self.screen, PANEL, rect, border_radius=6)
+        self._text("转盘定位画面", self.font_heading, TEXT, rect.x + 16, rect.y + 13)
+
+        status_text = "USB CAMERA · LIVE" if state.camera_ready else "USB CAMERA"
+        status_color = ACCENT if state.camera_ready else WARN
+        status_surface = self.font_small.render(status_text, True, status_color)
+        self.screen.blit(
+            status_surface,
+            (rect.right - status_surface.get_width() - 18, rect.y + 20),
+        )
+
+        viewport = pygame.Rect(
+            rect.x + 18,
+            rect.y + 55,
+            rect.width - 36,
+            rect.height - 75,
+        )
+        pygame.draw.rect(self.screen, PANEL_DARK, viewport, border_radius=4)
+
+        frame_width, frame_height = state.camera_frame_size
+        if (
+            state.camera_frame_rgb is not None
+            and frame_width > 0
+            and frame_height > 0
+        ):
+            expected_size = frame_width * frame_height * 3
+            if len(state.camera_frame_rgb) == expected_size:
+                frame_surface = pygame.image.frombuffer(
+                    state.camera_frame_rgb,
+                    (frame_width, frame_height),
+                    "RGB",
+                )
+                scale = min(
+                    viewport.width / frame_width,
+                    viewport.height / frame_height,
+                )
+                scaled_size = (
+                    max(1, round(frame_width * scale)),
+                    max(1, round(frame_height * scale)),
+                )
+                scaled = pygame.transform.smoothscale(frame_surface, scaled_size)
+                destination = scaled.get_rect(center=viewport.center)
+                self.screen.blit(scaled, destination)
+            else:
+                self._center_text(
+                    "摄像头帧格式错误",
+                    self.font_heading,
+                    WARN,
+                    viewport,
+                )
+        else:
+            message = "摄像头连接中..." if not state.camera_error else "摄像头暂不可用"
+            self._center_text(message, self.font_heading, WARN, viewport)
+
+        overlay = pygame.Rect(
+            viewport.x,
+            viewport.bottom - 42,
+            viewport.width,
+            42,
+        )
+        overlay_surface = pygame.Surface(overlay.size, pygame.SRCALPHA)
+        overlay_surface.fill((0, 0, 0, 170))
+        self.screen.blit(overlay_surface, overlay.topleft)
+        self._text(
+            f"转动中 → {state.lamp_name}  {state.motor_target_deg:.2f}°",
+            self.font_body,
+            TEXT,
+            overlay.x + 14,
+            overlay.y + 10,
+            max_width=overlay.width - 28,
+        )
 
     def _draw_plot_grid(self, plot: pygame.Rect) -> None:
         pygame.draw.rect(self.screen, PANEL_DARK, plot, border_radius=4)

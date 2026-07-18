@@ -1,0 +1,79 @@
+切换本工程文件夹：
+cd /home/cc/Desktop/UICode
+
+安装环境：
+python3 -m venv --system-site-packages .venv
+
+激活环境：
+source .venv/bin/activate
+
+安装必要包:
+python -m pip install -U pip
+python -m pip install -r UI/requirements.txt
+
+运行 4x4 矩阵键盘测试：
+cd /home/cc/Desktop/UICode
+source .venv/bin/activate
+python 16Button/read_keypad.py
+
+运行 UI 模拟数据主程序：
+cd /home/cc/Desktop/UICode
+source .venv/bin/activate
+
+DISPLAY=:0 XAUTHORITY=/home/cc/.Xauthority \
+/home/cc/Desktop/UICode/.venv/bin/python /home/cc/Desktop/UICode/UI/app.py --backend sim
+
+运行 UI 真实 IN0 主程序：
+cd /home/cc/Desktop/UICode
+source .venv/bin/activate
+
+DISPLAY=:0 XAUTHORITY=/home/cc/.Xauthority \
+/home/cc/Desktop/UICode/.venv/bin/python /home/cc/Desktop/UICode/UI/app.py --backend hardware
+
+单独测试 WiringPi 8 紫外灯 PWM（必须先退出或停止 UI）：
+sudo systemctl stop raspi-ui.service
+/usr/bin/python3 /home/cc/Desktop/UICode/LED/test_uv_led.py --duty 30 --seconds 3
+sudo systemctl start raspi-ui.service
+
+调试紫外灯 PWM 输出：
+DISPLAY=:0 XAUTHORITY=/home/cc/.Xauthority \
+/home/cc/Desktop/UICode/.venv/bin/python /home/cc/Desktop/UICode/UI/app.py --backend hardware --debug-led
+
+检查并测试 USB 摄像头（必须先退出或停止 UI）：
+v4l2-ctl --list-devices
+ls -l /dev/video*
+sudo systemctl stop raspi-ui.service
+/home/cc/Desktop/UICode/.venv/bin/python /home/cc/Desktop/UICode/USBCamara/test_usb_camera.py --frames 30 --debug
+sudo systemctl start raspi-ui.service
+
+调试 USB 摄像头：
+DISPLAY=:0 XAUTHORITY=/home/cc/.Xauthority \
+/home/cc/Desktop/UICode/.venv/bin/python /home/cc/Desktop/UICode/UI/app.py --backend hardware --debug-camera
+
+通过启动脚本运行 UI 硬件模式：
+/bin/bash /home/cc/Desktop/UICode/UI/run_hardware_ui.sh
+
+安装并立即启用 UI 开机自启动：
+（树莓派需要启用 cc 用户的桌面自动登录）
+sudo cp /home/cc/Desktop/UICode/UI/systemd/raspi-ui.service /etc/systemd/system/raspi-ui.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now raspi-ui.service
+
+查看 UI 服务状态和日志：
+systemctl status raspi-ui.service --no-pager
+journalctl -u raspi-ui.service -f
+
+重启 UI 服务：
+sudo systemctl restart raspi-ui.service
+
+停止服务并取消开机自启动：
+sudo systemctl disable --now raspi-ui.service
+
+调试 UI 收到的 IN0 RAW/mV：
+DISPLAY=:0 XAUTHORITY=/home/cc/.Xauthority \
+/home/cc/Desktop/UICode/.venv/bin/python /home/cc/Desktop/UICode/UI/app.py --backend hardware --debug-sensor
+
+单独监控 IN0（必须先退出 UI）：
+cd /home/cc/Desktop/UICode
+source .venv/bin/activate
+/usr/bin/python3 /home/cc/Desktop/UICode/ADS1256/monitor_in0.py
