@@ -171,63 +171,95 @@ class ExperimentController:
             return
         self.state.motor_adjustment_active = True
         self._prepare_auto_camera()
-        self.state.motor_adjustment_input = self._format_angle(
-            self.state.motor_target_deg
-        )
+        if 0.0 <= self.state.motor_target_deg <= 360.0:
+            self.state.motor_adjustment_input = self._format_angle(
+                self.state.motor_target_deg
+            )
+            self.state.motor_adjustment_error = ""
+        else:
+            self.state.motor_adjustment_input = ""
+            self.state.motor_adjustment_error = "请输入 0~360° 的目标角度"
         self.state.motor_adjustment_replace_input = True
-        self.state.motor_adjustment_error = ""
         self.state.status = f"手动调节：{self.state.lamp_name}"
 
     def _handle_motor_adjustment_key(self, key: str) -> None:
         if key == "#":
             self._save_motor_adjustment()
             return
-        if key in {"A", "B", "C", "D"}:
-            delta_by_key = {
-                "A": 0.1,
-                "B": -0.1,
-                "C": 0.5,
-                "D": -0.5,
-            }
-            self._apply_manual_angle(
-                self.state.motor_target_deg + delta_by_key[key]
-            )
-            self.state.motor_adjustment_input = self._format_angle(
-                self.state.motor_target_deg
-            )
+        if key == "A":
+            self._submit_manual_input()
+            return
+        if key == "D":
+            self.state.motor_adjustment_input = ""
             self.state.motor_adjustment_replace_input = True
+            self.state.motor_adjustment_error = ""
+            return
+        if key in {"B", "C"}:
             return
         if key == "*":
             if self.state.motor_adjustment_replace_input:
-                self.state.motor_adjustment_input = "0."
-                self.state.motor_adjustment_replace_input = False
+                value_text = "0."
             elif "." not in self.state.motor_adjustment_input:
-                self.state.motor_adjustment_input += "."
+                value_text = self.state.motor_adjustment_input + "."
+            else:
+                return
+            if self._set_manual_input(value_text):
+                self.state.motor_adjustment_replace_input = False
             return
         if len(key) != 1 or not key.isdigit():
             return
 
         if self.state.motor_adjustment_replace_input:
             value_text = key
-            self.state.motor_adjustment_replace_input = False
         else:
             value_text = self.state.motor_adjustment_input + key
         if len(value_text) > 10:
             self.state.motor_adjustment_error = "输入值过长"
             return
-        self.state.motor_adjustment_input = value_text
-        self._apply_manual_input()
+        if self._set_manual_input(value_text):
+            self.state.motor_adjustment_replace_input = False
 
-    def _apply_manual_input(self) -> None:
+    def _set_manual_input(self, value_text: str) -> bool:
+        try:
+            angle_deg = float(value_text)
+        except ValueError:
+            return False
+        if not math.isfinite(angle_deg) or not 0.0 <= angle_deg <= 360.0:
+            self.state.motor_adjustment_error = "角度范围必须为 0~360°"
+            return False
+        self.state.motor_adjustment_input = value_text
+        self.state.motor_adjustment_error = ""
+        return True
+
+    def _submit_manual_input(self) -> None:
+        if self.state.motor_moving:
+            self.state.motor_adjustment_error = "电机正在转动，请到位后再确认"
+            return
+        if self.state.motor_adjustment_error in {
+            "输入值过长",
+            "角度范围必须为 0~360°",
+        }:
+            return
+        if not self.state.motor_adjustment_input:
+            self.state.motor_adjustment_error = "请输入 0~360° 的目标角度"
+            return
         try:
             angle_deg = float(self.state.motor_adjustment_input)
         except ValueError:
+            self.state.motor_adjustment_error = "请输入有效的目标角度"
+            return
+        if not math.isfinite(angle_deg) or not 0.0 <= angle_deg <= 360.0:
+            self.state.motor_adjustment_error = "角度范围必须为 0~360°"
             return
         self._apply_manual_angle(angle_deg)
+        self.state.motor_adjustment_replace_input = True
 
     def _apply_manual_angle(self, target_angle_deg: float) -> None:
         if not math.isfinite(target_angle_deg):
             self.state.motor_adjustment_error = "角度必须是有限数值"
+            return
+        if not 0.0 <= target_angle_deg <= 360.0:
+            self.state.motor_adjustment_error = "角度范围必须为 0~360°"
             return
         offset_deg = (
             target_angle_deg
@@ -249,7 +281,7 @@ class ExperimentController:
         else:
             self._angle_selector(self.state.lamp_index, target_angle_deg)
         self.state.status = (
-            f"实时调节：{self.state.lamp_name} {target_angle_deg:.3f}°"
+            f"正在转动：{self.state.lamp_name} {target_angle_deg:.3f}°"
         )
 
     def _save_motor_adjustment(self) -> None:

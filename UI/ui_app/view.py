@@ -275,7 +275,7 @@ class MainView:
         input_rect = pygame.Rect(rect.x + 14, rect.y + 54, rect.width - 28, 76)
         pygame.draw.rect(self.screen, PANEL_DARK, input_rect, border_radius=5)
         pygame.draw.rect(self.screen, ACCENT, input_rect, width=2, border_radius=5)
-        angle_text = f"{state.motor_adjustment_input or '0'}°"
+        angle_text = f"{state.motor_adjustment_input or '--'}°"
         self._center_text(angle_text, self.font_title, TEXT, input_rect)
 
         self._text(
@@ -286,7 +286,7 @@ class MainView:
             input_rect.bottom + 10,
         )
         motor_text = (
-            "电机实时移动中"
+            "电机转动中"
             if state.motor_moving
             else f"当前位置：{state.motor_position_deg:.3f}°"
         )
@@ -299,7 +299,7 @@ class MainView:
             max_width=rect.width - 32,
         )
         self._text(
-            "数字键直接输入目标角度",
+            "目标角度范围：0~360°",
             self.font_small,
             MUTED,
             rect.x + 16,
@@ -312,10 +312,8 @@ class MainView:
         key_x = rect.x + 14
         key_y = rect.y + 226
         adjustment_keys = (
-            ("A", "+0.1°"),
-            ("B", "-0.1°"),
-            ("C", "+0.5°"),
-            ("D", "-0.5°"),
+            ("A", "确认转动"),
+            ("D", "清空输入"),
         )
         for index, (key, label) in enumerate(adjustment_keys):
             column = index % 2
