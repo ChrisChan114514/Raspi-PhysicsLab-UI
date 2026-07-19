@@ -5,7 +5,7 @@ from pathlib import Path
 import pygame
 
 from .analysis import FFTResult, analyze_fft
-from .state import CONTROL_ITEMS, LAMP_NAMES, DeviceState
+from .state import CONTROL_ITEMS, LAMP_SHORT_NAMES, DeviceState
 
 
 BG = (13, 17, 20)
@@ -206,7 +206,7 @@ class MainView:
                 else:
                     label += " · 待定位"
             elif key == "intensity":
-                label += " · UV亮" if state.light_on else " · UV灭"
+                label += " · 灯亮" if state.light_on else " · 灯灭"
             elif not state.camera_enabled and state.camera_auto_visible:
                 label += " · 自动显示"
             elif not state.camera_enabled:
@@ -264,7 +264,7 @@ class MainView:
         )
         self._text("手动角度调节", self.font_heading, TEXT, rect.x + 18, rect.y + 13)
         self._text(
-            state.lamp_name,
+            LAMP_SHORT_NAMES[state.lamp_index],
             self.font_body,
             WARN,
             rect.right - 88,
@@ -409,7 +409,7 @@ class MainView:
             pygame.Rect(center_rect.x, center_rect.y + 21, center_rect.width, 28),
         )
         self._center_text(
-            f"当前：{LAMP_NAMES[state.active_lamp_index]}",
+            f"当前：{LAMP_SHORT_NAMES[state.active_lamp_index]}",
             self.font_small,
             MUTED,
             pygame.Rect(center_rect.x, center_rect.bottom - 4, center_rect.width, 20),
@@ -418,13 +418,13 @@ class MainView:
         left_label_rect = pygame.Rect(left_rect.x - 9, left_rect.bottom + 4, 60, 18)
         right_label_rect = pygame.Rect(right_rect.x - 9, right_rect.bottom + 4, 60, 18)
         self._center_text(
-            LAMP_NAMES[(state.lamp_index - 1) % len(LAMP_NAMES)],
+            LAMP_SHORT_NAMES[(state.lamp_index - 1) % len(LAMP_SHORT_NAMES)],
             self.font_small,
             MUTED,
             left_label_rect,
         )
         self._center_text(
-            LAMP_NAMES[(state.lamp_index + 1) % len(LAMP_NAMES)],
+            LAMP_SHORT_NAMES[(state.lamp_index + 1) % len(LAMP_SHORT_NAMES)],
             self.font_small,
             MUTED,
             right_label_rect,

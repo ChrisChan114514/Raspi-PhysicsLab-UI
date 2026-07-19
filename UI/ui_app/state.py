@@ -6,8 +6,19 @@ from time import monotonic
 
 CONTROL_ITEMS = ("lamp", "intensity", "camera")
 CAMERA_VIEW_MODES = ("small", "full")
-LAMP_NAMES = ("紫外光", "蓝光", "绿光", "红光", "红外光", "灯位6")
+LAMP_NAMES = (
+    "400nm紫外光",
+    "450nm蓝光",
+    "520nm绿光",
+    "红光",
+    "红外光",
+    "灯位6",
+)
+LAMP_SHORT_NAMES = ("400nm", "450nm", "520nm", "红光", "红外", "灯位6")
 UV_LAMP_INDEX = 0
+BLUE_LAMP_INDEX = 1
+GREEN_LAMP_INDEX = 2
+PWM_LAMP_INDICES = frozenset((UV_LAMP_INDEX, BLUE_LAMP_INDEX, GREEN_LAMP_INDEX))
 DEFAULT_LAMP_ANGLES_DEG = (0.0, 60.0, 120.0, 180.0, 240.0, 300.0)
 
 

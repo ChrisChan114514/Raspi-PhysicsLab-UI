@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PWM driver for the ultraviolet lamp connected to Raspberry Pi GPIO."""
+"""PWM driver for the wavelength lamps connected to Raspberry Pi GPIO."""
 
 from __future__ import annotations
 
@@ -14,6 +14,16 @@ except ModuleNotFoundError:
 
 UV_LED_WIRINGPI_PIN = 8
 UV_LED_BCM_GPIO = 2
+GREEN_LED_WIRINGPI_PIN = 9
+GREEN_LED_BCM_GPIO = 3
+BLUE_LED_WIRINGPI_PIN = 7
+BLUE_LED_BCM_GPIO = 4
+
+LED_BCM_GPIO_BY_WIRINGPI_PIN = {
+    UV_LED_WIRINGPI_PIN: UV_LED_BCM_GPIO,
+    GREEN_LED_WIRINGPI_PIN: GREEN_LED_BCM_GPIO,
+    BLUE_LED_WIRINGPI_PIN: BLUE_LED_BCM_GPIO,
+}
 
 
 class LedPwmError(RuntimeError):
@@ -31,14 +41,16 @@ class LedPwmConfig:
     debug: bool = False
 
     def validate(self) -> None:
-        if self.wiringpi_pin != UV_LED_WIRINGPI_PIN:
+        expected_bcm_gpio = LED_BCM_GPIO_BY_WIRINGPI_PIN.get(self.wiringpi_pin)
+        if expected_bcm_gpio is None:
             raise ValueError(
-                f"only WiringPi pin {UV_LED_WIRINGPI_PIN} is configured"
+                "WiringPi pin must be one of "
+                f"{sorted(LED_BCM_GPIO_BY_WIRINGPI_PIN)}"
             )
-        if self.bcm_gpio != UV_LED_BCM_GPIO:
+        if self.bcm_gpio != expected_bcm_gpio:
             raise ValueError(
-                f"WiringPi pin {UV_LED_WIRINGPI_PIN} must map to "
-                f"BCM GPIO{UV_LED_BCM_GPIO}"
+                f"WiringPi pin {self.wiringpi_pin} must map to "
+                f"BCM GPIO{expected_bcm_gpio}"
             )
         if self.gpiochip < 0:
             raise ValueError("gpiochip must not be negative")

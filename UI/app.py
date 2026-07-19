@@ -36,7 +36,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--debug-led",
         action="store_true",
-        help="在终端打印紫外灯 PWM 输出状态",
+        help="在终端打印三路灯组 PWM 输出状态",
     )
     parser.add_argument(
         "--debug-camera",
@@ -70,12 +70,12 @@ def parse_args() -> argparse.Namespace:
         "--led-pwm-frequency",
         type=float,
         default=1000.0,
-        help="紫外灯 PWM 频率（Hz），默认 1000",
+        help="灯组 PWM 频率（Hz），默认 1000",
     )
     parser.add_argument(
         "--led-active-low",
         action="store_true",
-        help="紫外灯驱动输入为低电平有效",
+        help="三路灯组驱动输入均为低电平有效",
     )
     parser.add_argument(
         "--camera-device",

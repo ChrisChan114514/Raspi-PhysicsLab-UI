@@ -12,7 +12,7 @@ from .state import (
     CONTROL_ITEMS,
     DEFAULT_LAMP_ANGLES_DEG,
     LAMP_NAMES,
-    UV_LAMP_INDEX,
+    PWM_LAMP_INDICES,
     DeviceState,
     SamplePoint,
 )
@@ -300,11 +300,12 @@ class ExperimentController:
             self.state.started_at_s = time.monotonic() - last_timestamp
 
     def sync_light_output(self) -> None:
+        self.hardware.light.select_lamp(self.state.active_lamp_index)
         should_enable = (
             self.state.measuring
             and self.state.motor_ready
             and not self.state.motor_moving
-            and self.state.active_lamp_index == UV_LAMP_INDEX
+            and self.state.active_lamp_index in PWM_LAMP_INDICES
             and self.state.intensity_percent > 0
         )
         self.hardware.light.set_enabled(should_enable)

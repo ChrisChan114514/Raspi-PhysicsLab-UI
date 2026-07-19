@@ -100,7 +100,7 @@ def run_app(config: AppConfig) -> int:
         )
         if state.motor_ready:
             controller.sync_light_output()
-            state.status = "正在测量：紫外光已到位"
+            state.status = f"正在测量：{state.lamp_name}已到位"
         else:
             controller.select_lamp(UV_LAMP_INDEX)
         view = MainView(screen, config.font_dir)

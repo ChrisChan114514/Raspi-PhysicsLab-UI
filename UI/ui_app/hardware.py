@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .input import Button, ButtonReading
+from .state import BLUE_LAMP_INDEX, GREEN_LAMP_INDEX, UV_LAMP_INDEX
 
 
 MATRIX_KEY_TO_BUTTON = {
@@ -285,6 +286,9 @@ class LightController:
     def enabled(self) -> bool:
         return False
 
+    def select_lamp(self, lamp_index: int) -> None:
+        raise NotImplementedError
+
     def set_enabled(self, enabled: bool) -> None:
         raise NotImplementedError
 
@@ -299,10 +303,17 @@ class SimulatedLightController(LightController):
     def __init__(self) -> None:
         self.intensity_percent = 100
         self._enabled = False
+        self._active_lamp_index = UV_LAMP_INDEX
 
     @property
     def enabled(self) -> bool:
         return self._enabled and self.intensity_percent > 0
+
+    def select_lamp(self, lamp_index: int) -> None:
+        lamp_index = int(lamp_index)
+        if lamp_index != self._active_lamp_index:
+            self._enabled = False
+            self._active_lamp_index = lamp_index
 
     def set_enabled(self, enabled: bool) -> None:
         self._enabled = bool(enabled)
@@ -325,34 +336,78 @@ class RaspberryPiPwmLightController(LightController):
     ) -> None:
         driver_path = led_dir / "led_pwm.py"
         if not driver_path.is_file():
-            raise FileNotFoundError(f"未找到紫外灯 PWM 驱动：{driver_path}")
+            raise FileNotFoundError(f"未找到灯组 PWM 驱动：{driver_path}")
         sys.path.insert(0, str(led_dir))
-        from led_pwm import LedPwmConfig, PwmLed  # noqa: PLC0415
+        from led_pwm import (  # noqa: PLC0415
+            BLUE_LED_BCM_GPIO,
+            BLUE_LED_WIRINGPI_PIN,
+            GREEN_LED_BCM_GPIO,
+            GREEN_LED_WIRINGPI_PIN,
+            UV_LED_BCM_GPIO,
+            UV_LED_WIRINGPI_PIN,
+            LedPwmConfig,
+            PwmLed,
+        )
 
         self.intensity_percent = max(0, min(100, initial_intensity_percent))
-        self._led = PwmLed(
-            LedPwmConfig(
-                frequency_hz=frequency_hz,
-                active_high=active_high,
-                initial_duty_percent=self.intensity_percent,
-                debug=debug,
-            )
-        )
-        self._led.open()
+        self._active_lamp_index = UV_LAMP_INDEX
+        pins_by_lamp_index = {
+            UV_LAMP_INDEX: (UV_LED_WIRINGPI_PIN, UV_LED_BCM_GPIO),
+            BLUE_LAMP_INDEX: (BLUE_LED_WIRINGPI_PIN, BLUE_LED_BCM_GPIO),
+            GREEN_LAMP_INDEX: (GREEN_LED_WIRINGPI_PIN, GREEN_LED_BCM_GPIO),
+        }
+        self._leds: dict[int, PwmLed] = {}
+        try:
+            for lamp_index, (wiringpi_pin, bcm_gpio) in pins_by_lamp_index.items():
+                led = PwmLed(
+                    LedPwmConfig(
+                        wiringpi_pin=wiringpi_pin,
+                        bcm_gpio=bcm_gpio,
+                        frequency_hz=frequency_hz,
+                        active_high=active_high,
+                        initial_duty_percent=self.intensity_percent,
+                        debug=debug,
+                    )
+                )
+                led.open()
+                self._leds[lamp_index] = led
+        except Exception:
+            for led in self._leds.values():
+                led.close()
+            raise
 
     @property
     def enabled(self) -> bool:
-        return self._led.enabled
+        led = self._leds.get(self._active_lamp_index)
+        return led.enabled if led is not None else False
+
+    def select_lamp(self, lamp_index: int) -> None:
+        lamp_index = int(lamp_index)
+        if lamp_index == self._active_lamp_index:
+            return
+        for led in self._leds.values():
+            led.set_enabled(False)
+        self._active_lamp_index = lamp_index
 
     def set_enabled(self, enabled: bool) -> None:
-        self._led.set_enabled(enabled)
+        for lamp_index, led in self._leds.items():
+            led.set_enabled(bool(enabled) and lamp_index == self._active_lamp_index)
 
     def set_intensity(self, percent: int) -> None:
         self.intensity_percent = max(0, min(100, percent))
-        self._led.set_duty_cycle(self.intensity_percent)
+        for led in self._leds.values():
+            led.set_duty_cycle(self.intensity_percent)
 
     def close(self) -> None:
-        self._led.close()
+        first_error: Exception | None = None
+        for led in self._leds.values():
+            try:
+                led.close()
+            except Exception as exc:
+                if first_error is None:
+                    first_error = exc
+        if first_error is not None:
+            raise first_error
 
 
 @dataclass(frozen=True)
