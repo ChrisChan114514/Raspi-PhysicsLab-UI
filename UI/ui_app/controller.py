@@ -104,6 +104,9 @@ class ExperimentController:
             self.state.status = "当前参数已选中，可用 4 / 6 调整"
 
     def select_lamp(self, index: int) -> None:
+        if not self.hardware.device_available("emm"):
+            self.state.status = "EMM 电机自检未通过，无法切换灯位"
+            return
         target_index = index % len(LAMP_NAMES)
         if (
             target_index == self.state.active_lamp_index
@@ -134,6 +137,10 @@ class ExperimentController:
         )
 
     def set_intensity(self, percent: int) -> None:
+        if not self.hardware.device_available("leds"):
+            self.state.light_on = False
+            self.state.status = "LED PWM 自检未通过，灯光功能不可用"
+            return
         self.state.intensity_percent = max(0, min(100, percent))
         self.hardware.light.set_intensity(self.state.intensity_percent)
         self.sync_light_output()
@@ -146,6 +153,15 @@ class ExperimentController:
         self.set_camera_enabled(not self.state.camera_enabled)
 
     def set_camera_enabled(self, enabled: bool) -> None:
+        if enabled and not self.hardware.device_available("camera"):
+            self.state.camera_enabled = False
+            self.state.camera_ready = False
+            self.state.camera_error = self.hardware.self_test_failures.get(
+                "camera",
+                "设备不可用",
+            )
+            self.state.status = "USB 摄像头自检未通过，摄像功能不可用"
+            return
         self.state.camera_enabled = bool(enabled)
         self.state.camera_ready = False
         self.state.camera_frame_rgb = None
@@ -166,6 +182,9 @@ class ExperimentController:
         self.state.status = f"摄像画面：{self.state.camera_view_name}"
 
     def enter_motor_adjustment(self) -> None:
+        if not self.hardware.device_available("emm"):
+            self.state.status = "EMM 电机自检未通过，无法调节角度"
+            return
         if self.state.motor_moving:
             self.state.status = "电机正在转动，请到位后再手动调节"
             return
@@ -300,6 +319,8 @@ class ExperimentController:
         )
 
     def _prepare_auto_camera(self) -> None:
+        if not self.hardware.device_available("camera"):
+            return
         if self.state.camera_enabled:
             return
         self.state.camera_ready = False
@@ -319,6 +340,16 @@ class ExperimentController:
         self.state.status = "曲线已清空"
 
     def set_measurement(self, measuring: bool) -> None:
+        if measuring and not self.hardware.device_available("ads1256"):
+            self.state.measuring = False
+            self.sync_light_output()
+            self.state.status = "ADS1256 自检未通过，无法开始测量"
+            return
+        if measuring and not self.hardware.device_available("emm"):
+            self.state.measuring = False
+            self.sync_light_output()
+            self.state.status = "EMM 电机自检未通过，无法确认灯位"
+            return
         if measuring and (self.state.motor_moving or not self.state.motor_ready):
             self.state.measuring = False
             self.sync_light_output()

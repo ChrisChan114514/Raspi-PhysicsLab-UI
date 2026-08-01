@@ -17,12 +17,6 @@ from check_connection import make_pins
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Scan ADS1256 single-ended channels.")
-    parser.add_argument(
-        "--numbering",
-        choices=("wiringpi", "bcm"),
-        default="wiringpi",
-        help="Interpret the fixed ADS1256 pin map as WiringPi or BCM numbers. Default: wiringpi",
-    )
     parser.add_argument("--gpiochip", type=int, default=0, help="lgpio chip number")
     parser.add_argument("--vref", type=float, default=2.5, help="Reference voltage. Default: 2.5 V")
     parser.add_argument("--interval", type=float, default=0.5, help="Scan interval. Default: 0.5 s")
@@ -32,7 +26,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    pins = make_pins(args.numbering)
+    pins = make_pins()
 
     print("Scanning AIN0..AIN7 single-ended. Values are AINx - AINCOM.")
     print("Press Ctrl+C to stop.")

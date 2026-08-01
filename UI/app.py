@@ -36,7 +36,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--debug-led",
         action="store_true",
-        help="在终端打印三路灯组 PWM 输出状态",
+        help="在终端打印六路灯组 PWM 输出状态",
     )
     parser.add_argument(
         "--debug-camera",
@@ -75,7 +75,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--led-active-low",
         action="store_true",
-        help="三路灯组驱动输入均为低电平有效",
+        help="六路灯组驱动输入均为低电平有效",
     )
     parser.add_argument(
         "--camera-device",

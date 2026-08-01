@@ -27,6 +27,9 @@ class AppConfig:
     camera_width: int = 640
     camera_height: int = 480
     camera_fps: float = 15.0
+    self_test_step_delay_s: float = 0.12
+    self_test_result_delay_s: float = 1.0
+    self_test_failure_delay_s: float = 2.5
 
     @property
     def keypad_dir(self) -> Path:

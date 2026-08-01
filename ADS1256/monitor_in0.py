@@ -58,12 +58,6 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Monitor ADS1256 AIN0 and print only mV and RAW values."
     )
-    parser.add_argument(
-        "--numbering",
-        choices=("wiringpi", "bcm"),
-        default="wiringpi",
-        help="Interpret the fixed ADS1256 pin map as WiringPi or BCM numbers. Default: wiringpi",
-    )
     parser.add_argument("--gpiochip", type=int, default=0, help="lgpio chip number")
     parser.add_argument(
         "--interval",
@@ -148,7 +142,7 @@ def configure_adc(adc: ADS1256BitBang, args: argparse.Namespace) -> None:
 
 def main() -> int:
     args = parse_args()
-    pins: ADS1256Pins = make_pins(args.numbering)
+    pins: ADS1256Pins = make_pins()
 
     try:
         with ADS1256BitBang(pins=pins, gpiochip=args.gpiochip) as adc:

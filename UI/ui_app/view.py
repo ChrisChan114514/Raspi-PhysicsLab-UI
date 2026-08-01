@@ -5,6 +5,12 @@ from pathlib import Path
 import pygame
 
 from .analysis import FFTResult, analyze_fft
+from .self_test import (
+    SELF_TEST_FAILED,
+    SELF_TEST_PASSED,
+    SELF_TEST_RUNNING,
+    SelfTestItem,
+)
 from .state import CONTROL_ITEMS, LAMP_SHORT_NAMES, DeviceState
 
 
@@ -17,6 +23,7 @@ MUTED = (157, 168, 175)
 ACCENT = (54, 184, 139)
 ACCENT_DARK = (26, 92, 74)
 WARN = (238, 174, 71)
+ERROR = (224, 91, 91)
 GRID = (59, 68, 74)
 CURVE = (100, 190, 235)
 FFT_CURVE = (238, 174, 71)
@@ -148,6 +155,90 @@ class MainView:
             self._draw_controls(controls, state)
         self._draw_chart(chart, state)
         self._draw_key_guide(footer, state.last_key)
+        pygame.display.flip()
+
+    def draw_self_test(
+        self,
+        items: list[SelfTestItem],
+        summary: str = "正在检查硬件连接",
+    ) -> None:
+        self.screen.fill(BG)
+        width, height = self.screen.get_size()
+        content_width = min(860, width - 80)
+        left = (width - content_width) // 2
+
+        self._text("系统启动自检", self.font_title, TEXT, left, 36)
+        self._text(summary, self.font_body, MUTED, left, 82, max_width=content_width)
+
+        completed = sum(
+            item.status in (SELF_TEST_PASSED, SELF_TEST_FAILED)
+            for item in items
+        )
+        progress = completed / max(1, len(items))
+        progress_rect = pygame.Rect(left, 116, content_width, 8)
+        pygame.draw.rect(self.screen, GRID, progress_rect, border_radius=4)
+        if progress > 0:
+            fill_rect = pygame.Rect(
+                progress_rect.x,
+                progress_rect.y,
+                max(8, round(progress_rect.width * progress)),
+                progress_rect.height,
+            )
+            pygame.draw.rect(self.screen, ACCENT, fill_rect, border_radius=4)
+
+        status_names = {
+            "pending": "等待",
+            SELF_TEST_RUNNING: "检查中",
+            SELF_TEST_PASSED: "正常",
+            SELF_TEST_FAILED: "异常",
+        }
+        status_colors = {
+            "pending": MUTED,
+            SELF_TEST_RUNNING: WARN,
+            SELF_TEST_PASSED: ACCENT,
+            SELF_TEST_FAILED: ERROR,
+        }
+        row_top = 148
+        row_height = 60
+        for index, item in enumerate(items):
+            y = row_top + index * row_height
+            color = status_colors[item.status]
+            pygame.draw.circle(self.screen, color, (left + 10, y + 22), 6)
+            self._text(item.label, self.font_body, TEXT, left + 30, y + 9)
+            self._text(
+                item.detail,
+                self.font_small,
+                MUTED if item.status != SELF_TEST_FAILED else ERROR,
+                left + 250,
+                y + 12,
+                max_width=content_width - 350,
+            )
+            status_text = status_names[item.status]
+            status_width = self.font_small.size(status_text)[0]
+            self._text(
+                status_text,
+                self.font_small,
+                color,
+                left + content_width - status_width,
+                y + 12,
+            )
+            pygame.draw.line(
+                self.screen,
+                GRID,
+                (left, y + row_height - 5),
+                (left + content_width, y + row_height - 5),
+                1,
+            )
+
+        footer = f"{completed} / {len(items)}"
+        footer_width = self.font_small.size(footer)[0]
+        self._text(
+            footer,
+            self.font_small,
+            MUTED,
+            left + content_width - footer_width,
+            height - 46,
+        )
         pygame.display.flip()
 
     def _draw_header(self, rect: pygame.Rect, state: DeviceState) -> None:

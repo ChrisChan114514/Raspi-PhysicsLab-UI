@@ -7,24 +7,16 @@ import argparse
 import sys
 import time
 from dataclasses import dataclass
-from typing import Dict, List
+from typing import Dict
 
 from ads1256_bitbang import (
     ADS1256BitBang,
     ADS1256Pins,
     DRATE_REG,
-    IO_REG,
-    WIRINGPI_TO_BCM,
 )
 
 
-REGISTER_NAMES = ("STATUS", "MUX", "ADCON", "DRATE", "IO")
-DEFAULT_PATTERNS = (0x0, 0xF, 0x5, 0xA)
 ADS1256_WIRINGPI_PINS = {
-    "D3": 0,
-    "D2": 1,
-    "D1": 2,
-    "D0": 3,
     "SCLK": 4,
     "DIN": 5,
     "DOUT": 6,
@@ -43,15 +35,9 @@ class CheckResult:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Check ADS1256 SPI, DRDY, RESET, and D0-D3 wiring."
+        description="Check ADS1256 SPI, DRDY, and RESET wiring."
     )
     parser.add_argument("--gpiochip", type=int, default=0, help="lgpio chip number")
-    parser.add_argument(
-        "--numbering",
-        choices=("wiringpi", "bcm"),
-        default="wiringpi",
-        help="Interpret the fixed ADS1256 pin map as WiringPi or BCM numbers. Default: wiringpi",
-    )
     parser.add_argument(
         "--half-period-us",
         type=float,
@@ -64,11 +50,6 @@ def parse_args() -> argparse.Namespace:
         help="Do not toggle RST before the check.",
     )
     parser.add_argument(
-        "--skip-dpins",
-        action="store_true",
-        help="Only check SPI registers; do not drive ADS1256 D0-D3 or Pi GPIO0-3.",
-    )
-    parser.add_argument(
         "--drdy-timeout",
         type=float,
         default=2.0,
@@ -77,9 +58,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def make_pins(numbering: str) -> ADS1256Pins:
-    if numbering == "bcm":
-        return ADS1256Pins.from_bcm_defaults()
+def make_pins() -> ADS1256Pins:
     return ADS1256Pins.from_wiringpi_defaults()
 
 
@@ -130,42 +109,6 @@ def check_drate_roundtrip(adc: ADS1256BitBang, timeout_s: float) -> CheckResult:
         adc.write_register(DRATE_REG, original, timeout_s=timeout_s)
 
 
-def check_ads_outputs_to_pi(adc: ADS1256BitBang, timeout_s: float) -> CheckResult:
-    adc.claim_data_pins_input()
-    mismatches: List[str] = []
-
-    for pattern in DEFAULT_PATTERNS:
-        adc.write_register(IO_REG, pattern, timeout_s=timeout_s)
-        time.sleep(0.02)
-        got = adc.read_data_pins()
-        if got != pattern:
-            mismatches.append(f"ADS->Pi wrote=0x{pattern:X} read_gpio=0x{got:X}")
-
-    if mismatches:
-        return CheckResult("d0_d3_ads_to_pi", False, "; ".join(mismatches))
-    return CheckResult("d0_d3_ads_to_pi", True, "ADS1256 D0-D3 output patterns reached Pi GPIO0-3")
-
-
-def check_pi_outputs_to_ads(adc: ADS1256BitBang, timeout_s: float) -> CheckResult:
-    adc.write_register(IO_REG, 0xF0, timeout_s=timeout_s)
-    time.sleep(0.02)
-    adc.claim_data_pins_output(0)
-    mismatches: List[str] = []
-
-    for pattern in DEFAULT_PATTERNS:
-        adc.write_data_pins(pattern)
-        time.sleep(0.02)
-        io_value = adc.read_register(IO_REG, timeout_s=timeout_s)
-        got = io_value & 0x0F
-        if got != pattern:
-            mismatches.append(f"Pi->ADS wrote_gpio=0x{pattern:X} IO=0x{io_value:02X}")
-
-    adc.claim_data_pins_input()
-    if mismatches:
-        return CheckResult("d0_d3_pi_to_ads", False, "; ".join(mismatches))
-    return CheckResult("d0_d3_pi_to_ads", True, "Pi GPIO0-3 output patterns reached ADS1256 IO register")
-
-
 def print_result(result: CheckResult) -> None:
     status = "PASS" if result.ok else "FAIL"
     print(f"[{status}] {result.name}: {result.detail}", flush=True)
@@ -173,25 +116,17 @@ def print_result(result: CheckResult) -> None:
 
 def main() -> int:
     args = parse_args()
-    pins = make_pins(args.numbering)
+    pins = make_pins()
     failures = 0
 
     print("ADS1256 connection check")
-    print(f"Pin numbering: {args.numbering}")
     print("Pin map used by lgpio:")
     for name, bcm_pin in pins.named_pins.items():
-        if args.numbering == "wiringpi":
-            wiringpi_pin = ADS1256_WIRINGPI_PINS[name]
-            expected_bcm = WIRINGPI_TO_BCM[wiringpi_pin]
-            print(f"  {name:4s} -> WiringPi {wiringpi_pin:2d} -> BCM GPIO{expected_bcm}")
-        else:
-            print(f"  {name:4s} -> BCM GPIO{bcm_pin}")
+        wiringpi_pin = ADS1256_WIRINGPI_PINS[name]
+        print(f"  {name:4s} -> WiringPi {wiringpi_pin:2d} -> BCM GPIO{bcm_pin}")
     print()
     print("Warnings:")
     print("  - ADS1256 digital I/O connected to Raspberry Pi must be 3.3V-level or level-shifted.")
-    if args.numbering == "bcm":
-        print("  - BCM GPIO28 and GPIO29 are not on the normal Raspberry Pi 4B 40-pin header.")
-        print("  - BCM GPIO0/1 are normally HAT EEPROM pins; GPIO2/3 have I2C pull-ups.")
     print()
 
     try:
@@ -225,20 +160,6 @@ def main() -> int:
             roundtrip = check_drate_roundtrip(adc, args.drdy_timeout)
             print_result(roundtrip)
             failures += 0 if roundtrip.ok else 1
-
-            if not args.skip_dpins:
-                saved_io = adc.read_register(IO_REG, timeout_s=args.drdy_timeout)
-                try:
-                    ads_to_pi = check_ads_outputs_to_pi(adc, args.drdy_timeout)
-                    print_result(ads_to_pi)
-                    failures += 0 if ads_to_pi.ok else 1
-
-                    pi_to_ads = check_pi_outputs_to_ads(adc, args.drdy_timeout)
-                    print_result(pi_to_ads)
-                    failures += 0 if pi_to_ads.ok else 1
-                finally:
-                    adc.claim_data_pins_input()
-                    adc.write_register(IO_REG, saved_io, timeout_s=args.drdy_timeout)
 
             final_registers = adc.read_named_registers()
             print(f"Final registers: {format_regs(final_registers)}")

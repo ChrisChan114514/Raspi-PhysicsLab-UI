@@ -8,6 +8,12 @@ from .config import AppConfig
 from .controller import ExperimentController
 from .hardware import create_hardware
 from .input import Button, ButtonEvent
+from .self_test import (
+    SELF_TEST_FAILED,
+    SELF_TEST_PASSED,
+    SelfTestProgress,
+    startup_self_test_items,
+)
 from .state import UV_LAMP_INDEX, DeviceState
 from .view import MainView
 from .workers import (
@@ -38,6 +44,20 @@ KEY_TO_BUTTON = {
 }
 
 
+def _hold_self_test_screen(
+    view: MainView,
+    progress: SelfTestProgress,
+    clock: pygame.time.Clock,
+    duration_s: float,
+    summary: str,
+) -> None:
+    deadline = time.monotonic() + max(0.0, duration_s)
+    while time.monotonic() < deadline:
+        pygame.event.pump()
+        view.draw_self_test(progress.items, summary)
+        clock.tick(30)
+
+
 def run_app(config: AppConfig) -> int:
     os.environ.setdefault("SDL_VIDEO_CENTERED", "1")
     os.environ.setdefault("SDL_VIDEO_MINIMIZE_ON_FOCUS_LOSS", "0")
@@ -52,6 +72,47 @@ def run_app(config: AppConfig) -> int:
         pygame.display.set_caption("不同材料光电流测量")
         pygame.mouse.set_visible(False)
         clock = pygame.time.Clock()
+        view = MainView(screen, config.font_dir)
+        self_test = SelfTestProgress(startup_self_test_items())
+
+        def report_self_test(key: str, status: str, detail: str) -> None:
+            self_test.update(key, status, detail)
+            view.draw_self_test(self_test.items)
+            print(
+                f"[SELF-TEST] {key} {status}: {detail}",
+                flush=True,
+            )
+            if status in (SELF_TEST_PASSED, SELF_TEST_FAILED):
+                _hold_self_test_screen(
+                    view,
+                    self_test,
+                    clock,
+                    config.self_test_step_delay_s,
+                    "正在检查硬件连接",
+                )
+
+        view.draw_self_test(self_test.items)
+        report_self_test("display", "running", "确认 SDL 显示表面与输出分辨率")
+        display_failure_detail = ""
+        try:
+            if not pygame.display.get_init() or pygame.display.get_surface() is None:
+                raise RuntimeError("SDL 显示输出尚未初始化")
+            display_width, display_height = screen.get_size()
+            if display_width <= 0 or display_height <= 0:
+                raise RuntimeError("SDL 返回了无效显示尺寸")
+            if (display_width, display_height) != config.display_size:
+                raise RuntimeError(
+                    f"分辨率为 {display_width}x{display_height}，"
+                    f"期望 {config.display_size[0]}x{config.display_size[1]}"
+                )
+            display_detail = (
+                f"{display_width}x{display_height} / "
+                f"{pygame.display.get_driver()}"
+            )
+            report_self_test("display", SELF_TEST_PASSED, display_detail)
+        except Exception as exc:
+            display_failure_detail = str(exc)
+            report_self_test("display", SELF_TEST_FAILED, display_failure_detail)
 
         hardware = create_hardware(
             config.backend,
@@ -73,7 +134,31 @@ def run_app(config: AppConfig) -> int:
             debug_motor=config.debug_motor,
             debug_led=config.debug_led,
             debug_camera=config.debug_camera,
+            progress_callback=report_self_test,
         )
+        if display_failure_detail:
+            hardware.self_test_failures = {
+                "display": display_failure_detail,
+                **hardware.self_test_failures,
+            }
+        if self_test.failed_items:
+            failed_labels = "、".join(item.label for item in self_test.failed_items)
+            self_test_summary = (
+                f"自检完成：{len(self_test.failed_items)} 项异常（{failed_labels}），"
+                "相关功能将停用或受限"
+            )
+            self_test_delay_s = config.self_test_failure_delay_s
+        else:
+            self_test_summary = "自检完成：全部设备正常，正在进入实验界面"
+            self_test_delay_s = config.self_test_result_delay_s
+        _hold_self_test_screen(
+            view,
+            self_test,
+            clock,
+            self_test_delay_s,
+            self_test_summary,
+        )
+
         state = DeviceState(lamp_angles_deg=hardware.stepper.lamp_angles_deg)
         state.motor_position_deg = hardware.stepper.position_deg
         nearest_lamp = min(
@@ -86,8 +171,16 @@ def run_app(config: AppConfig) -> int:
         state.lamp_index = UV_LAMP_INDEX
         state.motor_target_deg = state.lamp_angles_deg[UV_LAMP_INDEX]
         state.motor_ready = (
-            abs(state.motor_position_deg - state.motor_target_deg) <= 0.5
+            hardware.device_available("emm")
+            and abs(state.motor_position_deg - state.motor_target_deg) <= 0.5
         )
+        state.measuring = (
+            hardware.device_available("ads1256")
+            and hardware.device_available("emm")
+        )
+        state.camera_enabled = hardware.device_available("camera")
+        if not state.camera_enabled:
+            state.camera_error = hardware.self_test_failures.get("camera", "设备不可用")
         state.started_at_s = time.monotonic()
         hardware.light.set_intensity(state.intensity_percent)
         motor_worker = MotorWorkerThread(hardware.stepper)
@@ -98,12 +191,28 @@ def run_app(config: AppConfig) -> int:
             angle_selector=motor_worker.move_to_angle,
             offset_saver=hardware.stepper.save_lamp_angle_offset,
         )
-        if state.motor_ready:
+        if not hardware.device_available("emm"):
+            state.status = "自检异常：EMM 电机不可用，转轮功能已停用"
+            controller.sync_light_output()
+        elif state.motor_ready:
             controller.sync_light_output()
             state.status = f"正在测量：{state.lamp_name}已到位"
         else:
             controller.select_lamp(UV_LAMP_INDEX)
-        view = MainView(screen, config.font_dir)
+        if hardware.self_test_failures:
+            failure_names = {
+                "ads1256": "ADS1256",
+                "display": "HDMI 显示",
+                "emm": "EMM 电机",
+                "keypad": "矩阵键盘",
+                "leds": "LED PWM",
+                "camera": "USB 摄像头",
+            }
+            unavailable = "、".join(
+                failure_names.get(key, key)
+                for key in hardware.self_test_failures
+            )
+            state.status = f"自检异常：{unavailable}"
         button_worker = ButtonPollerThread(hardware.buttons, poll_hz=config.button_poll_hz)
         camera_worker = CameraPollerThread(
             hardware.camera,

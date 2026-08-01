@@ -8,9 +8,17 @@ import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 from .input import Button, ButtonReading
-from .state import BLUE_LAMP_INDEX, GREEN_LAMP_INDEX, UV_LAMP_INDEX
+from .state import (
+    BLUE_LAMP_INDEX,
+    GREEN_LAMP_INDEX,
+    LED4_LAMP_INDEX,
+    LED5_LAMP_INDEX,
+    LED6_LAMP_INDEX,
+    UV_LAMP_INDEX,
+)
 
 
 MATRIX_KEY_TO_BUTTON = {
@@ -343,6 +351,12 @@ class RaspberryPiPwmLightController(LightController):
             BLUE_LED_WIRINGPI_PIN,
             GREEN_LED_BCM_GPIO,
             GREEN_LED_WIRINGPI_PIN,
+            LED4_BCM_GPIO,
+            LED4_WIRINGPI_PIN,
+            LED5_BCM_GPIO,
+            LED5_WIRINGPI_PIN,
+            LED6_BCM_GPIO,
+            LED6_WIRINGPI_PIN,
             UV_LED_BCM_GPIO,
             UV_LED_WIRINGPI_PIN,
             LedPwmConfig,
@@ -355,6 +369,9 @@ class RaspberryPiPwmLightController(LightController):
             UV_LAMP_INDEX: (UV_LED_WIRINGPI_PIN, UV_LED_BCM_GPIO),
             BLUE_LAMP_INDEX: (BLUE_LED_WIRINGPI_PIN, BLUE_LED_BCM_GPIO),
             GREEN_LAMP_INDEX: (GREEN_LED_WIRINGPI_PIN, GREEN_LED_BCM_GPIO),
+            LED4_LAMP_INDEX: (LED4_WIRINGPI_PIN, LED4_BCM_GPIO),
+            LED5_LAMP_INDEX: (LED5_WIRINGPI_PIN, LED5_BCM_GPIO),
+            LED6_LAMP_INDEX: (LED6_WIRINGPI_PIN, LED6_BCM_GPIO),
         }
         self._leds: dict[int, PwmLed] = {}
         try:
@@ -602,6 +619,64 @@ class ADS1256PhotocurrentSensor(PhotocurrentSensor):
         self._adc.close()
 
 
+class UnavailableButtonReader(ButtonReader):
+    def poll(self) -> ButtonReading:
+        return ButtonReading(Button.NONE)
+
+
+class UnavailableStepperMotor(StepperMotor):
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+
+    def select_lamp(
+        self,
+        lamp_index: int,
+        cancel_event: threading.Event | None = None,
+    ) -> StepperMoveResult:
+        del lamp_index, cancel_event
+        raise RuntimeError(f"EMM 电机不可用：{self.reason}")
+
+    def move_to_angle(
+        self,
+        target_angle_deg: float,
+        cancel_event: threading.Event | None = None,
+    ) -> StepperMoveResult:
+        del target_angle_deg, cancel_event
+        raise RuntimeError(f"EMM 电机不可用：{self.reason}")
+
+    def save_lamp_angle_offset(self, offset_deg: float) -> None:
+        del offset_deg
+        raise RuntimeError(f"EMM 电机不可用：{self.reason}")
+
+
+class UnavailableLightController(LightController):
+    def select_lamp(self, lamp_index: int) -> None:
+        del lamp_index
+
+    def set_enabled(self, enabled: bool) -> None:
+        del enabled
+
+    def set_intensity(self, percent: int) -> None:
+        del percent
+
+
+class UnavailableCameraSource(CameraSource):
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+
+    def read(self) -> CameraReading:
+        raise RuntimeError(f"USB 摄像头不可用：{self.reason}")
+
+
+class UnavailablePhotocurrentSensor(PhotocurrentSensor):
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+
+    def read(self, lamp_index: int, intensity_percent: int) -> VoltageReading:
+        del lamp_index, intensity_percent
+        raise RuntimeError(f"ADS1256 不可用：{self.reason}")
+
+
 class HardwareBundle:
     def __init__(
         self,
@@ -610,12 +685,17 @@ class HardwareBundle:
         stepper_motor: StepperMotor,
         light_controller: LightController,
         camera_source: CameraSource,
+        self_test_failures: dict[str, str] | None = None,
     ) -> None:
         self.buttons = button_reader
         self.photocurrent = photocurrent_sensor
         self.stepper = stepper_motor
         self.light = light_controller
         self.camera = camera_source
+        self.self_test_failures = dict(self_test_failures or {})
+
+    def device_available(self, key: str) -> bool:
+        return key not in self.self_test_failures
 
     def close(self) -> None:
         try:
@@ -653,29 +733,35 @@ def create_hardware(
     debug_motor: bool = False,
     debug_led: bool = False,
     debug_camera: bool = False,
+    progress_callback: Callable[[str, str, str], None] | None = None,
 ) -> HardwareBundle:
+    def report(key: str, status: str, detail: str) -> None:
+        if progress_callback is not None:
+            progress_callback(key, status, detail)
+
+    def error_detail(exc: Exception) -> str:
+        detail = " ".join(str(exc).split())
+        return detail or type(exc).__name__
+
     if backend == "hardware":
-        buttons = MatrixKeypadButtonReader(keypad_dir=keypad_dir)
-        light = None
-        camera = None
-        sensor = None
-        stepper = None
+        failures: dict[str, str] = {}
+
+        sensor: PhotocurrentSensor | None = None
+        report("ads1256", "running", "等待 DRDY、寄存器回读与校准")
         try:
-            light = RaspberryPiPwmLightController(
-                led_dir=led_dir,
-                frequency_hz=led_pwm_frequency_hz,
-                active_high=not led_active_low,
-                debug=debug_led,
-            )
-            camera = OpenCVUSBCameraSource(
-                camera_dir=camera_dir,
-                device=camera_device,
-                width=camera_width,
-                height=camera_height,
-                fps=camera_fps,
-                debug=debug_camera,
-            )
             sensor = ADS1256PhotocurrentSensor(ads1256_dir=ads1256_dir)
+            report("ads1256", "passed", "SPI 通信、DRDY、寄存器与校准通过")
+        except Exception as exc:
+            detail = error_detail(exc)
+            failures["ads1256"] = detail
+            if sensor is not None:
+                sensor.close()
+            sensor = UnavailablePhotocurrentSensor(detail)
+            report("ads1256", "failed", detail)
+
+        stepper: StepperMotor | None = None
+        report("emm", "running", "等待串口版本、状态与位置应答")
+        try:
             stepper = EMMV5StepperMotor(
                 motor_dir=motor_dir,
                 port=motor_port,
@@ -684,18 +770,99 @@ def create_hardware(
                 pulses_per_revolution=motor_pulses_per_revolution,
                 debug=debug_motor,
             )
-        except Exception:
-            for device in (light, camera, stepper, sensor, buttons):
-                if device is None:
-                    continue
+            report("emm", "passed", "串口握手、使能状态与当前位置读取通过")
+        except Exception as exc:
+            detail = error_detail(exc)
+            failures["emm"] = detail
+            if stepper is not None:
+                stepper.close()
+            stepper = UnavailableStepperMotor(detail)
+            report("emm", "failed", detail)
+
+        buttons: ButtonReader | None = None
+        report("keypad", "running", "申请 8 路 GPIO 并执行一次矩阵扫描")
+        try:
+            buttons = MatrixKeypadButtonReader(keypad_dir=keypad_dir)
+            buttons.poll()
+            report("keypad", "passed", "GPIO 与扫描正常；被动键盘无握手应答")
+        except Exception as exc:
+            detail = error_detail(exc)
+            failures["keypad"] = detail
+            if buttons is not None:
+                buttons.close()
+            buttons = UnavailableButtonReader()
+            report("keypad", "failed", detail)
+
+        light: LightController | None = None
+        report("leds", "running", "申请 6 路 PWM GPIO，保持全部熄灭")
+        try:
+            light = RaspberryPiPwmLightController(
+                led_dir=led_dir,
+                frequency_hz=led_pwm_frequency_hz,
+                active_high=not led_active_low,
+                debug=debug_led,
+            )
+            light.set_enabled(False)
+            report("leds", "passed", "6 路 GPIO/PWM 已就绪，输出保持关闭")
+        except Exception as exc:
+            detail = error_detail(exc)
+            failures["leds"] = detail
+            if light is not None:
+                light.close()
+            light = UnavailableLightController()
+            report("leds", "failed", detail)
+
+        camera: CameraSource | None = None
+        report("camera", "running", "枚举设备并读取首帧")
+        try:
+            camera = OpenCVUSBCameraSource(
+                camera_dir=camera_dir,
+                device=camera_device,
+                width=camera_width,
+                height=camera_height,
+                fps=camera_fps,
+                debug=debug_camera,
+            )
+            frame = camera.read()
+            camera.close()
+            report(
+                "camera",
+                "passed",
+                f"设备应答正常，首帧 {frame.width}x{frame.height}",
+            )
+        except Exception as exc:
+            detail = error_detail(exc)
+            failures["camera"] = detail
+            if camera is not None:
                 try:
-                    device.close()
-                except Exception as cleanup_error:
-                    print(f"[HARDWARE CLEANUP ERROR] {cleanup_error}", flush=True)
-            raise
-        return HardwareBundle(buttons, sensor, stepper, light, camera)
+                    camera.close()
+                except Exception:
+                    pass
+            camera = UnavailableCameraSource(detail)
+            report("camera", "failed", detail)
+
+        return HardwareBundle(
+            buttons,
+            sensor,
+            stepper,
+            light,
+            camera,
+            self_test_failures=failures,
+        )
+
     sys.path.insert(0, str(motor_dir))
     from motor_config import load_motor_parameters  # noqa: PLC0415
+
+    simulated_details = {
+        "ads1256": "模拟 ADC 就绪",
+        "emm": "模拟转轮电机就绪",
+        "keypad": "模拟按键输入就绪",
+        "leds": "模拟六路灯控制就绪",
+        "camera": "模拟摄像画面就绪",
+    }
+    for key, detail in simulated_details.items():
+        report(key, "running", "初始化模拟设备")
+        report(key, "passed", detail)
 
     motor_parameters = load_motor_parameters(motor_dir / "motor_config.json")
     return HardwareBundle(

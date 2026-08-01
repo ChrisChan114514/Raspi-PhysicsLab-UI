@@ -134,10 +134,6 @@ class ADS1256ProtocolError(RuntimeError):
 
 @dataclass(frozen=True)
 class ADS1256Pins:
-    d3: int
-    d2: int
-    d1: int
-    d0: int
     sclk: int
     din: int
     dout: int
@@ -146,27 +142,8 @@ class ADS1256Pins:
     rst: int
 
     @classmethod
-    def from_bcm_defaults(cls) -> "ADS1256Pins":
-        return cls(
-            d3=0,
-            d2=1,
-            d1=2,
-            d0=3,
-            sclk=4,
-            din=5,
-            dout=6,
-            drdy=27,
-            cs=28,
-            rst=29,
-        )
-
-    @classmethod
     def from_wiringpi_defaults(cls) -> "ADS1256Pins":
         return cls(
-            d3=wiringpi_to_bcm(0),
-            d2=wiringpi_to_bcm(1),
-            d1=wiringpi_to_bcm(2),
-            d0=wiringpi_to_bcm(3),
             sclk=wiringpi_to_bcm(4),
             din=wiringpi_to_bcm(5),
             dout=wiringpi_to_bcm(6),
@@ -176,21 +153,8 @@ class ADS1256Pins:
         )
 
     @property
-    def data_pins_by_bit(self) -> Dict[int, int]:
-        return {
-            0: self.d0,
-            1: self.d1,
-            2: self.d2,
-            3: self.d3,
-        }
-
-    @property
     def named_pins(self) -> Dict[str, int]:
         return {
-            "D3": self.d3,
-            "D2": self.d2,
-            "D1": self.d1,
-            "D0": self.d0,
             "SCLK": self.sclk,
             "DIN": self.din,
             "DOUT": self.dout,
@@ -253,7 +217,6 @@ class ADS1256BitBang:
                 self.pins.rst: 1,
             }
         )
-        self.claim_data_pins_input()
         self._claim_inputs([self.pins.dout, self.pins.drdy])
 
     def close(self) -> None:
@@ -275,27 +238,6 @@ class ADS1256BitBang:
         handle = self._require_handle()
         for pin in pins:
             lgpio.gpio_claim_input(handle, pin)
-
-    def claim_data_pins_input(self) -> None:
-        self._claim_inputs(self.pins.data_pins_by_bit.values())
-
-    def claim_data_pins_output(self, nibble: int = 0) -> None:
-        self._claim_outputs(
-            {
-                pin: (nibble >> bit) & 0x01
-                for bit, pin in self.pins.data_pins_by_bit.items()
-            }
-        )
-
-    def write_data_pins(self, nibble: int) -> None:
-        for bit, pin in self.pins.data_pins_by_bit.items():
-            self.write(pin, (nibble >> bit) & 0x01)
-
-    def read_data_pins(self) -> int:
-        value = 0
-        for bit, pin in self.pins.data_pins_by_bit.items():
-            value |= self.read(pin) << bit
-        return value
 
     def read(self, pin: int) -> int:
         return int(lgpio.gpio_read(self._require_handle(), pin))
