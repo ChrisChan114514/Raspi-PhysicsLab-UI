@@ -1,6 +1,6 @@
 [Unit]
 Description=Photoelectric Current Measurement UI (1024x600 fullscreen)
-After=display-manager.service graphical.target systemd-user-sessions.service
+After=display-manager.service systemd-user-sessions.service
 Wants=display-manager.service
 StartLimitIntervalSec=0
 
@@ -26,4 +26,3 @@ TimeoutStopSec=10
 
 [Install]
 WantedBy=graphical.target
-WantedBy=multi-user.target

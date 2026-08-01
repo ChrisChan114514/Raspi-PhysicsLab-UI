@@ -227,7 +227,7 @@ write_service_file() {
     cat > "${SERVICE_PATH}" <<EOF
 [Unit]
 Description=Photoelectric Current Measurement UI (1024x600 fullscreen)
-After=display-manager.service graphical.target systemd-user-sessions.service
+After=display-manager.service systemd-user-sessions.service
 Wants=display-manager.service
 StartLimitIntervalSec=0
 
@@ -253,7 +253,6 @@ TimeoutStopSec=10
 
 [Install]
 WantedBy=graphical.target
-WantedBy=multi-user.target
 EOF
 
     systemctl daemon-reload
@@ -270,8 +269,16 @@ enable_service() {
     write_service_file
     systemctl disable "${SERVICE_NAME}" >/dev/null 2>&1 || true
     systemctl enable "${SERVICE_NAME}"
-    systemctl restart "${SERVICE_NAME}"
-    echo "[UI] ${SERVICE_NAME} is enabled at boot and started now."
+    systemctl restart --no-block "${SERVICE_NAME}"
+    echo "[UI] ${SERVICE_NAME} is enabled at boot. Start/restart job has been queued."
+    echo "[UI] Check it with: systemctl status ${SERVICE_NAME} --no-pager -l"
+
+    local default_target
+    default_target="$(systemctl get-default 2>/dev/null || true)"
+    if [[ "${default_target}" != "graphical.target" ]]; then
+        echo "[UI] Current default target is '${default_target:-unknown}', not 'graphical.target'."
+        echo "[UI] For touchscreen boot autostart, run once: sudo systemctl set-default graphical.target"
+    fi
 }
 
 service_command() {
