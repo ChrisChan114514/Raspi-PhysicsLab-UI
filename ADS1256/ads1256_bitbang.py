@@ -374,6 +374,7 @@ class ADS1256BitBang:
         self.delay_us(10)
         values = [self.transfer_byte(0xFF) for _ in range(count)]
         self.cs_high()
+        self.delay_us(10)
         return values
 
     def read_register(self, register: int, timeout_s: float = 2.0) -> int:
@@ -403,7 +404,7 @@ class ADS1256BitBang:
         self.write_registers(register, [value], timeout_s=timeout_s)
 
     def read_named_registers(self) -> Dict[str, int]:
-        values = [self.read_register(register) for register in range(STATUS_REG, IO_REG + 1)]
+        values = self.read_registers(STATUS_REG, IO_REG - STATUS_REG + 1)
         return {
             "STATUS": values[0],
             "MUX": values[1],
