@@ -48,8 +48,9 @@ ADCON_REG = 0x02
 DRATE_REG = 0x03
 IO_REG = 0x04
 
-ADCON_CLKOUT_OFF = 0x00
+ADCON_CLKOUT_MASK = 0x60
 ADCON_SDCS_OFF = 0x00
+ADCON_SDCS_PGA_MASK = 0x1F
 
 AINCOM = 0x0F
 
@@ -428,13 +429,13 @@ class ADS1256BitBang:
         expected = {
             "STATUS options": expected_status_options,
             "MUX": SINGLE_ENDED_MUX[channel],
-            "ADCON": ADCON_CLKOUT_OFF | ADCON_SDCS_OFF | (pga & 0x07),
+            "ADCON SDCS/PGA": ADCON_SDCS_OFF | (pga & 0x07),
             "DRATE": drate,
         }
         actual = {
             "STATUS options": registers["STATUS"] & 0x0E,
             "MUX": registers["MUX"],
-            "ADCON": registers["ADCON"] & 0x7F,
+            "ADCON SDCS/PGA": registers["ADCON"] & ADCON_SDCS_PGA_MASK,
             "DRATE": registers["DRATE"],
         }
         mismatches = [
@@ -526,7 +527,8 @@ class ADS1256BitBang:
         status = (0x02 if buffer_enabled else 0x00) | (
             0x04 if autocal_enabled else 0x00
         )
-        adcon = ADCON_CLKOUT_OFF | ADCON_SDCS_OFF | (pga & 0x07)
+        current_adcon = self.read_register(ADCON_REG, timeout_s=timeout_s)
+        adcon = (current_adcon & ADCON_CLKOUT_MASK) | ADCON_SDCS_OFF | (pga & 0x07)
 
         self.direct_command(SDATAC, timeout_s=timeout_s)
         self.write_register(STATUS_REG, status, timeout_s=timeout_s)
@@ -557,7 +559,8 @@ class ADS1256BitBang:
         if pga not in PGA_GAIN_BY_CODE:
             raise ValueError("PGA code must be one of 0..6")
 
-        adcon = ADCON_CLKOUT_OFF | ADCON_SDCS_OFF | (pga & 0x07)
+        current_adcon = self.read_register(ADCON_REG, timeout_s=timeout_s)
+        adcon = (current_adcon & ADCON_CLKOUT_MASK) | ADCON_SDCS_OFF | (pga & 0x07)
         self.write_register(ADCON_REG, adcon, timeout_s=timeout_s)
         return self.read_register(ADCON_REG, timeout_s=timeout_s)
 
