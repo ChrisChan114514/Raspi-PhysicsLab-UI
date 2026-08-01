@@ -603,7 +603,7 @@ class ADS1256PhotocurrentSensor(PhotocurrentSensor):
                     pga=self._pga,
                     drate=self._drate,
                     buffer_enabled=False,
-                    autocal_enabled=True,
+                    autocal_enabled=False,
                     selfcal=True,
                 )
                 for _ in range(3):

@@ -51,7 +51,7 @@ IO_REG = 0x04
 ADCON_CLKOUT_OFF = 0x00
 ADCON_SDCS_OFF = 0x00
 
-AINCOM = 0x08
+AINCOM = 0x0F
 
 SING_0 = 0x00 | AINCOM
 SING_1 = 0x10 | AINCOM
@@ -359,7 +359,7 @@ class ADS1256BitBang:
         self.write_registers(register, [value], timeout_s=timeout_s)
 
     def read_named_registers(self) -> Dict[str, int]:
-        values = self.read_registers(STATUS_REG, 5)
+        values = [self.read_register(register) for register in range(STATUS_REG, IO_REG + 1)]
         return {
             "STATUS": values[0],
             "MUX": values[1],
@@ -398,7 +398,15 @@ class ADS1256BitBang:
             if actual[name] != value
         ]
         if mismatches:
-            raise ADS1256ProtocolError("ADS1256 configuration mismatch: " + "; ".join(mismatches))
+            dump = " ".join(f"{name}=0x{value:02X}" for name, value in registers.items())
+            reversed_dump = " ".join(
+                f"{name}=0x{reverse_byte(value):02X}" for name, value in registers.items()
+            )
+            raise ADS1256ProtocolError(
+                "ADS1256 configuration mismatch: "
+                + "; ".join(mismatches)
+                + f"; readback {dump}; bit-reversed {reversed_dump}"
+            )
         return registers
 
     def configure_single_ended(
@@ -407,7 +415,7 @@ class ADS1256BitBang:
         pga: int = PGA_1,
         drate: int = DRATE_100SPS,
         buffer_enabled: bool = False,
-        autocal_enabled: bool = True,
+        autocal_enabled: bool = False,
         selfcal: bool = True,
         timeout_s: float = 2.0,
     ) -> None:
@@ -440,7 +448,7 @@ class ADS1256BitBang:
         pga: int = PGA_1,
         drate: int = DRATE_100SPS,
         buffer_enabled: bool = False,
-        autocal_enabled: bool = True,
+        autocal_enabled: bool = False,
         selfcal: bool = True,
         timeout_s: float = 2.0,
     ) -> None:
@@ -463,7 +471,7 @@ class ADS1256BitBang:
         pga: int = PGA_1,
         drate: int = DRATE_100SPS,
         buffer_enabled: bool = False,
-        autocal_enabled: bool = True,
+        autocal_enabled: bool = False,
         selfcal: bool = True,
         timeout_s: float = 2.0,
     ) -> None:
@@ -476,11 +484,14 @@ class ADS1256BitBang:
         adcon = ADCON_CLKOUT_OFF | ADCON_SDCS_OFF | (pga & 0x07)
 
         self.direct_command(SDATAC, timeout_s=timeout_s)
-        self.write_registers(
-            STATUS_REG,
-            [status, mux & 0xFF, adcon, drate],
-            timeout_s=timeout_s,
-        )
+        self.write_register(STATUS_REG, status, timeout_s=timeout_s)
+        time.sleep(0.05)
+        self.write_register(MUX_REG, mux & 0xFF, timeout_s=timeout_s)
+        time.sleep(0.05)
+        self.write_register(ADCON_REG, adcon, timeout_s=timeout_s)
+        time.sleep(0.05)
+        self.write_register(DRATE_REG, drate, timeout_s=timeout_s)
+        time.sleep(0.05)
 
         if selfcal:
             self.direct_command(SELFCAL, timeout_s=timeout_s)
@@ -639,6 +650,15 @@ def signed24_to_int(value: int) -> int:
     if value & 0x800000:
         return value - 0x1000000
     return value
+
+
+def reverse_byte(value: int) -> int:
+    value &= 0xFF
+    result = 0
+    for _ in range(8):
+        result = (result << 1) | (value & 0x01)
+        value >>= 1
+    return result
 
 
 def raw_to_voltage(raw: int, vref: float = 2.5, pga: int = PGA_1) -> float:
