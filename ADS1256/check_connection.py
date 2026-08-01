@@ -13,6 +13,7 @@ from ads1256_bitbang import (
     ADS1256BitBang,
     ADS1256Pins,
     DRATE_REG,
+    SDATAC,
 )
 
 
@@ -151,6 +152,11 @@ def main() -> int:
             failures += 0 if drdy_result.ok else 1
             if not drdy_ok:
                 return 1
+
+            # Register reads/writes must happen outside continuous-data mode.
+            # This matches the initialization path used by the hardware UI.
+            adc.direct_command(SDATAC, timeout_s=args.drdy_timeout)
+            time.sleep(0.01)
 
             registers = adc.read_named_registers()
             print_result(register_sanity(registers))
