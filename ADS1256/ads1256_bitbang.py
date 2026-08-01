@@ -48,6 +48,14 @@ ADCON_REG = 0x02
 DRATE_REG = 0x03
 IO_REG = 0x04
 
+REGISTER_NAMES = {
+    STATUS_REG: "STATUS",
+    MUX_REG: "MUX",
+    ADCON_REG: "ADCON",
+    DRATE_REG: "DRATE",
+    IO_REG: "IO",
+}
+
 ADCON_CLKOUT_MASK = 0x60
 ADCON_SDCS_OFF = 0x00
 ADCON_SDCS_PGA_MASK = 0x1F
@@ -404,6 +412,47 @@ class ADS1256BitBang:
     def write_register(self, register: int, value: int, timeout_s: float = 2.0) -> None:
         self.write_registers(register, [value], timeout_s=timeout_s)
 
+    def write_register_verified(
+        self,
+        register: int,
+        value: int,
+        *,
+        mask: int = 0xFF,
+        attempts: int = 8,
+        timeout_s: float = 2.0,
+        settle_s: float = 0.1,
+    ) -> int:
+        name = REGISTER_NAMES.get(register)
+        if name is None:
+            raise ValueError(f"unsupported verified register address: 0x{register:02X}")
+
+        expected = value & mask
+        last_registers: Dict[str, int] | None = None
+        for _ in range(max(1, attempts)):
+            self.write_register(register, value, timeout_s=timeout_s)
+            time.sleep(settle_s)
+            registers = self.read_named_registers()
+            last_registers = registers
+            actual = registers[name] & mask
+            if actual == expected:
+                return registers[name]
+            time.sleep(settle_s)
+
+        dump = " ".join(
+            f"{register_name}=0x{register_value:02X}"
+            for register_name, register_value in (last_registers or {}).items()
+        )
+        actual_text = (
+            f"0x{((last_registers or {}).get(name, 0) & mask):02X}"
+            if last_registers is not None
+            else "<unread>"
+        )
+        raise ADS1256ProtocolError(
+            f"ADS1256 WREG verify failed for {name}: "
+            f"wrote=0x{value & 0xFF:02X} expected(masked)=0x{expected:02X} "
+            f"actual(masked)={actual_text}; readback {dump}"
+        )
+
     def read_named_registers(self) -> Dict[str, int]:
         values = self.read_registers(STATUS_REG, IO_REG - STATUS_REG + 1)
         return {
@@ -550,18 +599,37 @@ class ADS1256BitBang:
         status = (0x02 if buffer_enabled else 0x00) | (
             0x04 if autocal_enabled else 0x00
         )
-        current_adcon = self.read_register(ADCON_REG, timeout_s=timeout_s)
+        self.direct_command(SDATAC, timeout_s=timeout_s)
+        time.sleep(0.05)
+        current_adcon = self.read_named_registers()["ADCON"]
         adcon = (current_adcon & ADCON_CLKOUT_MASK) | ADCON_SDCS_OFF | (pga & 0x07)
 
-        self.direct_command(SDATAC, timeout_s=timeout_s)
-        self.write_register(STATUS_REG, status, timeout_s=timeout_s)
-        time.sleep(0.05)
-        self.write_register(MUX_REG, mux & 0xFF, timeout_s=timeout_s)
-        time.sleep(0.05)
-        self.write_register(ADCON_REG, adcon, timeout_s=timeout_s)
-        time.sleep(0.05)
-        self.write_register(DRATE_REG, drate, timeout_s=timeout_s)
-        time.sleep(0.05)
+        self.write_register_verified(
+            STATUS_REG,
+            status,
+            mask=0x0E,
+            attempts=8,
+            timeout_s=timeout_s,
+        )
+        self.write_register_verified(
+            MUX_REG,
+            mux & 0xFF,
+            attempts=10,
+            timeout_s=timeout_s,
+        )
+        self.write_register_verified(
+            ADCON_REG,
+            adcon,
+            mask=ADCON_SDCS_PGA_MASK,
+            attempts=8,
+            timeout_s=timeout_s,
+        )
+        self.write_register_verified(
+            DRATE_REG,
+            drate,
+            attempts=12,
+            timeout_s=timeout_s,
+        )
 
         if selfcal:
             self.direct_command(SELFCAL, timeout_s=timeout_s)

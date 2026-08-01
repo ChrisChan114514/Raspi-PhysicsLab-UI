@@ -591,7 +591,8 @@ class ADS1256PhotocurrentSensor(PhotocurrentSensor):
         self._configuration_warning = ""
         self._configuration_verified = False
         last_error: Exception | None = None
-        for attempt in range(1, 4):
+        max_attempts = 5
+        for attempt in range(1, max_attempts + 1):
             try:
                 self._adc.hardware_reset()
                 if not self._adc.wait_drdy_low(2.0):
@@ -630,17 +631,25 @@ class ADS1256PhotocurrentSensor(PhotocurrentSensor):
                 self._configuration_verified = True
                 self._configuration_warning = ""
                 if attempt > 1:
-                    print(f"[ADS1256 RECOVERY] configuration recovered on attempt {attempt}/3", flush=True)
+                    print(
+                        f"[ADS1256 RECOVERY] configuration recovered on attempt {attempt}/{max_attempts}",
+                        flush=True,
+                    )
                 return
             except (self._protocol_error, TimeoutError) as exc:
                 last_error = exc
                 self._configuration_warning = str(exc)
-                print(f"[ADS1256 RECOVERY] configuration attempt {attempt}/3 failed: {exc}", flush=True)
+                print(
+                    f"[ADS1256 RECOVERY] configuration attempt {attempt}/{max_attempts} failed: {exc}",
+                    flush=True,
+                )
                 time.sleep(0.05)
 
         detail = str(last_error) if last_error is not None else "unknown ADS1256 configuration error"
         self._configuration_warning = detail
-        raise self._protocol_error(f"ADS1256 configuration/read check failed after 3 attempts: {detail}")
+        raise self._protocol_error(
+            f"ADS1256 configuration/read check failed after {max_attempts} attempts: {detail}"
+        )
 
     def _configure_input_mode(self, mode: str, selfcal: bool) -> None:
         if mode == "differential_ain0_ain1":
