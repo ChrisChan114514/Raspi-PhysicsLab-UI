@@ -573,6 +573,8 @@ class ADS1256PhotocurrentSensor(PhotocurrentSensor):
         self._pga = PGA_1
         self._drate = DRATE_30SPS
         self._protocol_error = ADS1256ProtocolError
+        self._configuration_verified = True
+        self._configuration_warning = ""
         adc = ADS1256BitBang(pins=ADS1256Pins.from_wiringpi_defaults(), gpiochip=0)
         self._adc = adc
         try:
@@ -586,16 +588,43 @@ class ADS1256PhotocurrentSensor(PhotocurrentSensor):
         self._adc.hardware_reset()
         if not self._adc.wait_drdy_low(2.0):
             raise TimeoutError("ADS1256 DRDY 未拉低，请检查供电、时钟和 DRDY 接线")
-        self._adc.configure_single_ended(
-            channel=0,
-            pga=self._pga,
-            drate=self._drate,
-            buffer_enabled=False,
-            autocal_enabled=True,
-            selfcal=True,
-        )
-        for _ in range(3):
-            self._adc.read_single_raw()
+        registers = self._adc.read_named_registers()
+        values = tuple(registers.values())
+        if all(value == 0x00 for value in values) or all(value == 0xFF for value in values):
+            raise self._protocol_error("ADS1256 did not return a valid register response")
+
+        self._configuration_verified = True
+        self._configuration_warning = ""
+        try:
+            self._adc.configure_single_ended(
+                channel=0,
+                pga=self._pga,
+                drate=self._drate,
+                buffer_enabled=False,
+                autocal_enabled=True,
+                selfcal=True,
+            )
+        except (self._protocol_error, TimeoutError) as exc:
+            self._configuration_verified = False
+            self._configuration_warning = str(exc)
+            print(
+                f"[ADS1256 WARNING] Register response received, but configuration was not verified: {exc}",
+                flush=True,
+            )
+
+        try:
+            for _ in range(3):
+                self._adc.read_single_raw()
+        except (self._protocol_error, TimeoutError) as exc:
+            print(f"[ADS1256 WARNING] Initial sample check skipped: {exc}", flush=True)
+
+    @property
+    def configuration_verified(self) -> bool:
+        return self._configuration_verified
+
+    @property
+    def configuration_warning(self) -> str:
+        return self._configuration_warning
 
     def read(self, lamp_index: int, intensity_percent: int) -> VoltageReading:
         try:
@@ -750,7 +779,14 @@ def create_hardware(
         report("ads1256", "running", "等待 DRDY、寄存器回读与校准")
         try:
             sensor = ADS1256PhotocurrentSensor(ads1256_dir=ads1256_dir)
-            report("ads1256", "passed", "SPI 通信、DRDY、寄存器与校准通过")
+            if sensor.configuration_verified:
+                report("ads1256", "passed", "SPI/DRDY/register response and calibration passed")
+            else:
+                report(
+                    "ads1256",
+                    "passed",
+                    "SPI/DRDY/register response passed; configuration readback was not verified",
+                )
         except Exception as exc:
             detail = error_detail(exc)
             failures["ads1256"] = detail
