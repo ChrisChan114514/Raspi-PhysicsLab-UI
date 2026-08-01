@@ -164,7 +164,7 @@ class MainView:
         header = pygame.Rect(margin, 10, width - margin * 2, header_h)
         content_y = header.bottom + gap
         content_h = height - margin - content_y
-        left_w = 398
+        left_w = 370
         controls = pygame.Rect(margin, content_y, left_w, content_h)
         chart = pygame.Rect(
             controls.right + gap,
@@ -376,8 +376,11 @@ class MainView:
             center_active=True,
             accent=WARN,
         )
-        step_rect = pygame.Rect(rect.right - 98, rect.y + 8, 88, 30)
-        self._draw_touch_button(step_rect, "步进", self._format_percent(state.pwm_step_percent) + "%")
+        step_rect = pygame.Rect(rect.right - 116, rect.y + 8, 104, 30)
+        self._draw_touch_button(
+            step_rect,
+            f"步进: {self._format_percent(state.pwm_step_percent)}%",
+        )
         self._add_touch_region("cycle_pwm_step", step_rect)
 
     def _draw_camera_selector_card(self, rect: pygame.Rect, state: DeviceState) -> None:
@@ -443,8 +446,8 @@ class MainView:
         self._text(title_text, self.font_heading, TEXT, rect.x + 12, rect.y + 9)
         button_y = rect.y + 44
         button_h = rect.bottom - button_y - 10
-        side_w = 86
-        gap = 9
+        side_w = 76
+        gap = 8
         left_rect = pygame.Rect(rect.x + 12, button_y, side_w, button_h)
         right_rect = pygame.Rect(rect.right - 12 - side_w, button_y, side_w, button_h)
         center_rect = pygame.Rect(
