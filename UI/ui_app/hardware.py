@@ -546,6 +546,105 @@ class SimulatedPhotocurrentSensor(PhotocurrentSensor):
         return VoltageReading(voltage_mv=voltage_mv, raw=raw)
 
 
+class STM32ADS1256PhotocurrentSensor(PhotocurrentSensor):
+    def __init__(
+        self,
+        ads1256_dir: Path,
+        gpiochip: int = 0,
+        timeout_s: float = 1.0,
+        max_sample_age_ms: int = 1000,
+        debug: bool = False,
+    ) -> None:
+        driver_path = ads1256_dir / "stm32_parallel_bridge.py"
+        if not driver_path.is_file():
+            raise FileNotFoundError(
+                f"STM32 ADS1256 parallel bridge driver not found: {driver_path}"
+            )
+
+        if str(ads1256_dir) not in sys.path:
+            sys.path.insert(0, str(ads1256_dir))
+
+        from stm32_parallel_bridge import (  # noqa: PLC0415
+            STM32ADS1256Bridge,
+            STM32ADS1256Sample,
+            STM32ParallelPins,
+            STM32ParallelProtocolError,
+        )
+
+        self._sample_type = STM32ADS1256Sample
+        self._protocol_error = STM32ParallelProtocolError
+        self._debug = debug
+        self._max_sample_age_ms = max_sample_age_ms
+        self._bridge = STM32ADS1256Bridge(
+            pins=STM32ParallelPins.from_ads1256_defaults(),
+            gpiochip=gpiochip,
+            timeout_s=timeout_s,
+        )
+        self._bridge.open()
+        self._last_sample = self._query_with_recovery()
+        if self._debug:
+            print(
+                "[STM32 ADS1256] "
+                f"status=0x{self._last_sample.status:02X} "
+                f"seq={self._last_sample.seq} raw={self._last_sample.raw} "
+                f"mV={self._last_sample.voltage_mv:+.6f} "
+                f"age={self._last_sample.age_ms}ms",
+                flush=True,
+            )
+
+    @property
+    def configuration_verified(self) -> bool:
+        return True
+
+    @property
+    def configuration_warning(self) -> str:
+        if self._last_sample.request_had_error:
+            return f"STM32 request status=0x{self._last_sample.status:02X}"
+        return ""
+
+    def _query_with_recovery(self):  # noqa: ANN202
+        last_error: Exception | None = None
+        for attempt in range(2):
+            try:
+                sample = self._bridge.query_sample()
+                if not sample.has_valid_sample:
+                    raise self._protocol_error(
+                        f"STM32 ADS1256 sample not valid: status=0x{sample.status:02X}"
+                    )
+                if sample.age_ms > self._max_sample_age_ms:
+                    raise TimeoutError(
+                        f"STM32 ADS1256 sample too old: age={sample.age_ms}ms"
+                    )
+                return sample
+            except (self._protocol_error, TimeoutError) as exc:
+                last_error = exc
+                if attempt == 0:
+                    if self._debug:
+                        print(f"[STM32 ADS1256 RECOVERY] {exc}", flush=True)
+                    self._bridge.reopen()
+                    continue
+                raise
+
+        raise RuntimeError(str(last_error) if last_error is not None else "STM32 ADS1256 query failed")
+
+    def read(self, lamp_index: int, intensity_percent: float) -> VoltageReading:
+        del lamp_index, intensity_percent
+        sample = self._query_with_recovery()
+        self._last_sample = sample
+        if self._debug:
+            print(
+                "[STM32 ADS1256 READ] "
+                f"status=0x{sample.status:02X} seq={sample.seq} "
+                f"raw={sample.raw} mV={sample.voltage_mv:+.6f} "
+                f"age={sample.age_ms}ms",
+                flush=True,
+            )
+        return VoltageReading(voltage_mv=sample.voltage_mv, raw=sample.raw)
+
+    def close(self) -> None:
+        self._bridge.close()
+
+
 class ADS1256PhotocurrentSensor(PhotocurrentSensor):
     def __init__(
         self,
@@ -845,6 +944,7 @@ def create_hardware(
     camera_width: int = 640,
     camera_height: int = 480,
     camera_fps: float = 15.0,
+    debug_sensor: bool = False,
     debug_motor: bool = False,
     debug_led: bool = False,
     debug_camera: bool = False,
@@ -864,8 +964,11 @@ def create_hardware(
         sensor: PhotocurrentSensor | None = None
         report("ads1256", "running", "等待 DRDY、寄存器回读与校准")
         try:
-            sensor = ADS1256PhotocurrentSensor(ads1256_dir=ads1256_dir)
-            report("ads1256", "passed", "SPI/DRDY/register response and calibration passed")
+            sensor = STM32ADS1256PhotocurrentSensor(
+                ads1256_dir=ads1256_dir,
+                debug=debug_sensor,
+            )
+            report("ads1256", "passed", "STM32 并行桥返回 ADS1256 采样")
         except Exception as exc:
             detail = error_detail(exc)
             failures["ads1256"] = detail

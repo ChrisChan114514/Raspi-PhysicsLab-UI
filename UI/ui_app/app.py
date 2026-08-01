@@ -252,6 +252,7 @@ def run_app(config: AppConfig) -> int:
             camera_width=config.camera_width,
             camera_height=config.camera_height,
             camera_fps=config.camera_fps,
+            debug_sensor=config.debug_sensor,
             debug_motor=config.debug_motor,
             debug_led=config.debug_led,
             debug_camera=config.debug_camera,
