@@ -7,7 +7,7 @@ import pygame
 from .config import AppConfig
 from .controller import ExperimentController
 from .hardware import create_hardware
-from .input import Button, ButtonEvent
+from .input import Button
 from .self_test import (
     SELF_TEST_FAILED,
     SELF_TEST_PASSED,
@@ -41,6 +41,22 @@ KEY_TO_BUTTON = {
     pygame.K_7: (Button.TEXT_INPUT, "7"),
     pygame.K_9: (Button.TEXT_INPUT, "9"),
     ord("*"): (Button.TEXT_INPUT, "*"),
+    pygame.K_PERIOD: (Button.TEXT_INPUT, "*"),
+    pygame.K_BACKSPACE: (Button.TEXT_INPUT, "C"),
+    pygame.K_DELETE: (Button.TEXT_INPUT, "D"),
+    pygame.K_RETURN: (Button.CONFIRM, "A"),
+    pygame.K_KP_ENTER: (Button.CONFIRM, "A"),
+    pygame.K_KP0: (Button.TEXT_INPUT, "0"),
+    pygame.K_KP1: (Button.TEXT_INPUT, "1"),
+    pygame.K_KP2: (Button.TEXT_INPUT, "2"),
+    pygame.K_KP3: (Button.TEXT_INPUT, "3"),
+    pygame.K_KP4: (Button.TEXT_INPUT, "4"),
+    pygame.K_KP5: (Button.TEXT_INPUT, "5"),
+    pygame.K_KP6: (Button.TEXT_INPUT, "6"),
+    pygame.K_KP7: (Button.TEXT_INPUT, "7"),
+    pygame.K_KP8: (Button.TEXT_INPUT, "8"),
+    pygame.K_KP9: (Button.TEXT_INPUT, "9"),
+    pygame.K_KP_PERIOD: (Button.TEXT_INPUT, "*"),
 }
 
 
@@ -56,6 +72,94 @@ def _hold_self_test_screen(
         pygame.event.pump()
         view.draw_self_test(progress.items, summary)
         clock.tick(30)
+
+
+def _touch_position_from_event(
+    event: pygame.event.Event,
+    screen: pygame.Surface,
+) -> tuple[int, int] | None:
+    if event.type == pygame.MOUSEBUTTONUP and getattr(event, "button", 0) == 1:
+        return int(event.pos[0]), int(event.pos[1])
+    if event.type == pygame.FINGERUP:
+        width, height = screen.get_size()
+        return int(event.x * width), int(event.y * height)
+    return None
+
+
+def _is_duplicate_touch(
+    position: tuple[int, int],
+    last_position: tuple[int, int],
+    last_at_s: float,
+) -> bool:
+    if time.monotonic() - last_at_s > 0.16:
+        return False
+    dx = position[0] - last_position[0]
+    dy = position[1] - last_position[1]
+    return dx * dx + dy * dy <= 24 * 24
+
+
+def _dispatch_touch_action(
+    view: MainView,
+    controller: ExperimentController,
+    position: tuple[int, int],
+) -> None:
+    region = view.find_touch_region(position)
+    if region is None:
+        return
+    state = controller.state
+    state.last_button = "TOUCH"
+    state.last_key = "触控"
+    action = region.action
+
+    if action == "modal_block":
+        return
+    if action == "numeric_token":
+        state.last_key = str(region.value)
+        controller.append_numeric_token(str(region.value))
+    elif action == "numeric_backspace":
+        state.last_key = "退格"
+        controller.backspace_numeric_input()
+    elif action == "numeric_clear":
+        state.last_key = "清空"
+        controller.clear_numeric_input()
+    elif action == "numeric_submit":
+        state.last_key = "确认"
+        controller.submit_numeric_input()
+    elif action == "numeric_cancel":
+        state.last_key = "取消"
+        controller.cancel_numeric_input()
+    elif action == "select_lamp":
+        controller.select_lamp(int(region.value))
+    elif action == "open_angle_input":
+        controller.begin_angle_input()
+    elif action == "save_angle_offset":
+        controller.save_angle_adjustment()
+    elif action == "close_angle_adjustment":
+        controller.close_angle_adjustment()
+    elif action == "intensity_down":
+        controller.set_intensity(state.intensity_percent - 5)
+    elif action == "intensity_up":
+        controller.set_intensity(state.intensity_percent + 5)
+    elif action == "open_intensity_input":
+        controller.begin_intensity_input()
+    elif action == "intensity_slider":
+        fraction = (position[0] - region.rect.x) / max(1, region.rect.width)
+        controller.set_intensity_from_slider(fraction)
+    elif action == "toggle_measurement":
+        controller.toggle_measurement()
+    elif action == "clear_curve":
+        controller.clear_curve()
+    elif action == "toggle_fft":
+        state.fft_visible = not state.fft_visible
+        state.status = "FFT分析已开启" if state.fft_visible else "FFT分析已关闭"
+    elif action == "toggle_camera":
+        controller.toggle_camera()
+    elif action == "toggle_camera_view":
+        controller.toggle_camera_view_mode()
+    elif action == "camera_view_small":
+        controller.set_camera_view_mode("small")
+    elif action == "camera_view_full":
+        controller.set_camera_view_mode("full")
 
 
 def run_app(config: AppConfig) -> int:
@@ -105,9 +209,15 @@ def run_app(config: AppConfig) -> int:
                     f"分辨率为 {display_width}x{display_height}，"
                     f"期望 {config.display_size[0]}x{config.display_size[1]}"
                 )
+            display_driver = pygame.display.get_driver()
+            if display_driver in {"dummy", "offscreen"}:
+                raise RuntimeError(
+                    f"SDL 使用不可见显示驱动 {display_driver}；"
+                    "请检查 DISPLAY、XAUTHORITY 或 SDL_VIDEODRIVER"
+                )
             display_detail = (
                 f"{display_width}x{display_height} / "
-                f"{pygame.display.get_driver()}"
+                f"{display_driver}"
             )
             report_self_test("display", SELF_TEST_PASSED, display_detail)
         except Exception as exc:
@@ -241,14 +351,30 @@ def run_app(config: AppConfig) -> int:
             )
 
         running = True
+        last_touch_at_s = 0.0
+        last_touch_position = (-10000, -10000)
         while running:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     running = False
+                elif (
+                    touch_position := _touch_position_from_event(event, screen)
+                ) is not None:
+                    if not _is_duplicate_touch(
+                        touch_position,
+                        last_touch_position,
+                        last_touch_at_s,
+                    ):
+                        _dispatch_touch_action(view, controller, touch_position)
+                        last_touch_position = touch_position
+                        last_touch_at_s = time.monotonic()
                 elif event.type == pygame.KEYDOWN:
                     if event.key in KEY_TO_BUTTON:
                         button, key = KEY_TO_BUTTON[event.key]
-                        controller.handle_button(ButtonEvent(button, key))
+                        state.last_button = button.value
+                        state.last_key = key
+                        if state.touch_input_active:
+                            controller.handle_numeric_key(key)
 
             for message in button_worker.drain():
                 if message.kind == "reading" and message.reading is not None:
@@ -273,11 +399,17 @@ def run_app(config: AppConfig) -> int:
                             f"key={message.event.key or '-'}",
                             flush=True,
                         )
-                    controller.handle_button(message.event)
+                    if state.touch_input_active:
+                        controller.handle_numeric_key(message.event.key)
+                    else:
+                        state.last_button = "KEYPAD_IDLE"
+                        state.last_key = message.event.key
+                        state.status = "请使用触摸屏操作；键盘仅在数字输入时生效"
                 elif message.kind == "conflict" and message.reading is not None:
                     state.last_button = "CONFLICT"
                     state.last_key = "多键"
-                    state.status = "按键冲突：请一次只按一个键"
+                    if state.touch_input_active:
+                        state.status = "数字输入按键冲突：请一次只按一个键"
                     if config.debug_buttons:
                         print(
                             f"[BUTTON CONFLICT] t={time.monotonic():.3f} "

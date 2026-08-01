@@ -6,6 +6,9 @@ from time import monotonic
 
 CONTROL_ITEMS = ("lamp", "intensity", "camera")
 CAMERA_VIEW_MODES = ("small", "full")
+TOUCH_INPUT_NONE = ""
+TOUCH_INPUT_ANGLE = "angle"
+TOUCH_INPUT_INTENSITY = "intensity"
 LAMP_NAMES = (
     "400nm紫外光",
     "450nm蓝光",
@@ -74,6 +77,10 @@ class DeviceState:
     motor_adjustment_input: str = ""
     motor_adjustment_replace_input: bool = True
     motor_adjustment_error: str = ""
+    touch_input_kind: str = TOUCH_INPUT_NONE
+    touch_input_value: str = ""
+    touch_input_replace_input: bool = True
+    touch_input_error: str = ""
     samples: list[SamplePoint] = field(default_factory=list)
     started_at_s: float = field(default_factory=monotonic)
 
@@ -105,6 +112,10 @@ class DeviceState:
     @property
     def camera_visible(self) -> bool:
         return self.camera_enabled or self.camera_auto_visible
+
+    @property
+    def touch_input_active(self) -> bool:
+        return self.touch_input_kind != TOUCH_INPUT_NONE
 
     def clear_samples(self) -> None:
         self.samples.clear()

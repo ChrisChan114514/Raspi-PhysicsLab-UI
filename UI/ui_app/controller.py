@@ -13,6 +13,9 @@ from .state import (
     DEFAULT_LAMP_ANGLES_DEG,
     LAMP_NAMES,
     PWM_LAMP_INDICES,
+    TOUCH_INPUT_ANGLE,
+    TOUCH_INPUT_INTENSITY,
+    TOUCH_INPUT_NONE,
     DeviceState,
     SamplePoint,
 )
@@ -37,6 +40,10 @@ class ExperimentController:
     def handle_button(self, event: ButtonEvent) -> None:
         self.state.last_button = event.button.value
         self.state.last_key = event.key
+
+        if self.state.touch_input_active:
+            self.handle_numeric_key(event.key)
+            return
 
         if self.state.motor_adjustment_active:
             self._handle_motor_adjustment_key(event.key)
@@ -65,6 +72,215 @@ class ExperimentController:
         elif event.button == Button.TOGGLE_FFT:
             self.state.fft_visible = not self.state.fft_visible
             self.state.status = "FFT分析已开启" if self.state.fft_visible else "FFT分析已关闭"
+
+    def begin_angle_input(self) -> None:
+        if self.state.motor_moving:
+            self.state.status = "电机正在转动，请到位后再输入角度"
+            return
+        self.enter_motor_adjustment()
+        if not self.state.motor_adjustment_active:
+            return
+        self.state.touch_input_kind = TOUCH_INPUT_ANGLE
+        self.state.touch_input_value = self.state.motor_adjustment_input
+        self.state.touch_input_replace_input = True
+        self.state.touch_input_error = self.state.motor_adjustment_error
+        self.state.status = f"输入转盘角度：{self.state.lamp_name}"
+
+    def begin_intensity_input(self) -> None:
+        if not self.hardware.device_available("leds"):
+            self.state.light_on = False
+            self.state.status = "LED PWM 自检未通过，无法输入光强"
+            return
+        self.state.touch_input_kind = TOUCH_INPUT_INTENSITY
+        self.state.touch_input_value = str(self.state.intensity_percent)
+        self.state.touch_input_replace_input = True
+        self.state.touch_input_error = ""
+        self.state.status = "输入 PWM 光强：0~100%"
+
+    def handle_numeric_key(self, key: str) -> bool:
+        if not self.state.touch_input_active:
+            return False
+        if key == "A":
+            return self.submit_numeric_input()
+        if key == "#":
+            self.cancel_numeric_input()
+            return True
+        if key == "D":
+            self.clear_numeric_input()
+            return True
+        if key == "C":
+            self.backspace_numeric_input()
+            return True
+        if key == "*":
+            self.append_numeric_token(".")
+            return True
+        if len(key) == 1 and key.isdigit():
+            self.append_numeric_token(key)
+            return True
+        return False
+
+    def append_numeric_token(self, token: str) -> None:
+        if not self.state.touch_input_active:
+            return
+        kind = self.state.touch_input_kind
+        if token == "." and kind != TOUCH_INPUT_ANGLE:
+            self._set_touch_input_error("PWM 光强只能输入整数 0~100")
+            return
+        if token == "." and "." in self.state.touch_input_value and not self.state.touch_input_replace_input:
+            return
+        if self.state.touch_input_replace_input:
+            value_text = "0." if token == "." else token
+        else:
+            value_text = self.state.touch_input_value + token
+        if len(value_text) > (10 if kind == TOUCH_INPUT_ANGLE else 3):
+            self._set_touch_input_error("输入值过长")
+            return
+        self._set_touch_input_text(value_text)
+        self.state.touch_input_replace_input = False
+
+    def backspace_numeric_input(self) -> None:
+        if not self.state.touch_input_active:
+            return
+        if self.state.touch_input_replace_input:
+            self.clear_numeric_input()
+            return
+        value_text = self.state.touch_input_value[:-1]
+        self._set_touch_input_text(value_text)
+        self.state.touch_input_replace_input = False
+
+    def clear_numeric_input(self) -> None:
+        if not self.state.touch_input_active:
+            return
+        self._set_touch_input_text("")
+        self.state.touch_input_replace_input = False
+
+    def cancel_numeric_input(self) -> None:
+        if not self.state.touch_input_active:
+            return
+        was_angle_input = self.state.touch_input_kind == TOUCH_INPUT_ANGLE
+        self.state.touch_input_kind = TOUCH_INPUT_NONE
+        self.state.touch_input_value = ""
+        self.state.touch_input_replace_input = True
+        self.state.touch_input_error = ""
+        if was_angle_input and not self.state.motor_moving:
+            self.state.motor_adjustment_active = False
+            self.state.motor_adjustment_error = ""
+        self.state.status = "数字输入已取消"
+
+    def submit_numeric_input(self) -> bool:
+        if not self.state.touch_input_active:
+            return False
+        kind = self.state.touch_input_kind
+        value = self._parse_touch_input()
+        if value is None:
+            return False
+
+        if kind == TOUCH_INPUT_ANGLE:
+            if self.state.motor_moving:
+                self._set_touch_input_error("电机正在转动，请到位后再确认")
+                return False
+            self.state.motor_adjustment_input = self._format_angle(value)
+            self.state.motor_adjustment_error = ""
+            self._submit_manual_input()
+            if self.state.motor_adjustment_error:
+                self._set_touch_input_error(self.state.motor_adjustment_error)
+                return False
+            self._close_touch_input()
+            self.state.status = "已提交转盘角度；到位后可点“保存偏移”"
+            return True
+
+        if kind == TOUCH_INPUT_INTENSITY:
+            self.set_intensity(round(value))
+            if not self.hardware.device_available("leds"):
+                return False
+            self._close_touch_input()
+            return True
+
+        return False
+
+    def save_angle_adjustment(self) -> None:
+        if not self.state.motor_adjustment_active:
+            self.state.status = "当前没有待保存的角度偏移"
+            return
+        if self.state.motor_moving:
+            self.state.motor_adjustment_error = "电机正在转动，到位后再保存"
+            self.state.status = self.state.motor_adjustment_error
+            return
+        self._save_motor_adjustment()
+
+    def close_angle_adjustment(self) -> None:
+        self._close_touch_input()
+        if not self.state.motor_adjustment_active:
+            return
+        self.state.motor_adjustment_active = False
+        self.state.motor_adjustment_replace_input = True
+        self.state.motor_adjustment_error = ""
+        self.state.lamp_arrow_focus = 0
+        self.state.status = "角度调节已退出；未写入配置文件"
+
+    def set_intensity_from_slider(self, fraction: float) -> None:
+        percent = round(max(0.0, min(1.0, fraction)) * 100)
+        self.set_intensity(percent)
+
+    def toggle_camera_view_mode(self) -> None:
+        self.set_camera_view_mode(
+            "full" if self.state.camera_view_mode == "small" else "small"
+        )
+
+    def _set_touch_input_text(self, value_text: str) -> None:
+        self.state.touch_input_value = value_text
+        error = self._touch_input_validation_error(value_text)
+        self._set_touch_input_error(error)
+
+    def _set_touch_input_error(self, error: str) -> None:
+        self.state.touch_input_error = error
+        if self.state.touch_input_kind == TOUCH_INPUT_ANGLE:
+            self.state.motor_adjustment_error = error
+
+    def _touch_input_validation_error(self, value_text: str) -> str:
+        if not self.state.touch_input_active or not value_text:
+            return ""
+        if self.state.touch_input_kind == TOUCH_INPUT_ANGLE:
+            try:
+                angle_deg = float(value_text)
+            except ValueError:
+                return "请输入有效角度"
+            if not math.isfinite(angle_deg) or not 0.0 <= angle_deg <= 360.0:
+                return "角度范围必须为 0~360°"
+            return ""
+        if self.state.touch_input_kind == TOUCH_INPUT_INTENSITY:
+            if not value_text.isdigit():
+                return "PWM 光强只能输入整数"
+            percent = int(value_text)
+            if not 0 <= percent <= 100:
+                return "PWM 光强范围必须为 0~100%"
+            return ""
+        return ""
+
+    def _parse_touch_input(self) -> float | None:
+        value_text = self.state.touch_input_value
+        if not value_text:
+            self._set_touch_input_error(
+                "请输入 0~360° 的目标角度"
+                if self.state.touch_input_kind == TOUCH_INPUT_ANGLE
+                else "请输入 0~100% 的 PWM 光强"
+            )
+            return None
+        error = self._touch_input_validation_error(value_text)
+        if error:
+            self._set_touch_input_error(error)
+            return None
+        try:
+            return float(value_text)
+        except ValueError:
+            self._set_touch_input_error("请输入有效数字")
+            return None
+
+    def _close_touch_input(self) -> None:
+        self.state.touch_input_kind = TOUCH_INPUT_NONE
+        self.state.touch_input_value = ""
+        self.state.touch_input_replace_input = True
+        self.state.touch_input_error = ""
 
     def _adjust_selected(self, direction: int) -> None:
         selected = self.state.selected_name

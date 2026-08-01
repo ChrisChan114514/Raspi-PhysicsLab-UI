@@ -56,10 +56,10 @@ ls -lh "/home/cc/Desktop/UICode/Font/Times New Roman.ttf"
 以下命令连接树莓派本机 `:0` 图形桌面。执行前需确保用户 `cc` 已登录桌面，
 且 `/home/cc/.Xauthority` 存在。
 
-硬件模式：
+硬件模式：（IPS屏幕是到DISPLAY1去了）
 
 ```bash
-DISPLAY=:0 XAUTHORITY=/home/cc/.Xauthority \
+DISPLAY=:1 XAUTHORITY=/home/cc/.Xauthority \
 /home/cc/Desktop/UICode/.venv/bin/python \
   /home/cc/Desktop/UICode/UI/app.py --backend hardware
 ```

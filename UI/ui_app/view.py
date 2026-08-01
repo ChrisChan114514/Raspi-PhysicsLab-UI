@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 import pygame
@@ -11,7 +12,12 @@ from .self_test import (
     SELF_TEST_RUNNING,
     SelfTestItem,
 )
-from .state import CONTROL_ITEMS, LAMP_SHORT_NAMES, DeviceState
+from .state import (
+    CONTROL_ITEMS,
+    LAMP_SHORT_NAMES,
+    TOUCH_INPUT_ANGLE,
+    DeviceState,
+)
 
 
 BG = (13, 17, 20)
@@ -48,6 +54,13 @@ KEY_GUIDES = (
     ("#", "启停"),
     ("*", "小数"),
 )
+
+
+@dataclass(frozen=True)
+class TouchRegion:
+    action: str
+    rect: pygame.Rect
+    value: object = None
 
 class MixedFont:
     def __init__(
@@ -109,6 +122,7 @@ class MixedFont:
 class MainView:
     def __init__(self, screen: pygame.Surface, font_dir: Path) -> None:
         self.screen = screen
+        self.touch_regions: list[TouchRegion] = []
         pygame.font.init()
         chinese_path = font_dir / "SimHei.ttf"
         latin_path = font_dir / "Times New Roman.ttf"
@@ -134,28 +148,42 @@ class MainView:
         return MixedFont(chinese_path, latin_path, size, bold)
 
     def draw(self, state: DeviceState) -> None:
+        self.touch_regions = []
         self.screen.fill(BG)
         width, height = self.screen.get_size()
         margin = 16
         header_h = 64
-        footer_h = 64
+        footer_h = 76
         gap = 12
         header = pygame.Rect(margin, 14, width - margin * 2, header_h)
         footer = pygame.Rect(margin, height - footer_h - margin, width - margin * 2, footer_h)
         content_y = header.bottom + gap
         content_h = footer.top - gap - content_y
-        left_w = 304
+        left_w = 340
         controls = pygame.Rect(margin, content_y, left_w, content_h)
         chart = pygame.Rect(controls.right + 14, content_y, width - controls.right - 30, content_h)
 
         self._draw_header(header, state)
-        if state.motor_adjustment_active:
-            self._draw_motor_adjustment(controls, state)
-        else:
-            self._draw_controls(controls, state)
+        self._draw_touch_controls(controls, state)
         self._draw_chart(chart, state)
-        self._draw_key_guide(footer, state.last_key)
+        self._draw_touch_toolbar(footer, state)
+        if state.touch_input_active:
+            self._draw_numeric_overlay(state)
         pygame.display.flip()
+
+    def find_touch_region(self, position: tuple[int, int]) -> TouchRegion | None:
+        for region in reversed(self.touch_regions):
+            if region.rect.collidepoint(position):
+                return region
+        return None
+
+    def _add_touch_region(
+        self,
+        action: str,
+        rect: pygame.Rect,
+        value: object = None,
+    ) -> None:
+        self.touch_regions.append(TouchRegion(action, rect.copy(), value))
 
     def draw_self_test(
         self,
@@ -257,11 +285,396 @@ class MainView:
             max_width=180,
         )
 
-        self._text("最近按键", self.font_small, MUTED, rect.right - 138, rect.y + 23)
-        key_rect = pygame.Rect(rect.right - 58, rect.y + 14, 38, 38)
+        self._text("最近输入", self.font_small, MUTED, rect.right - 150, rect.y + 23)
+        key_rect = pygame.Rect(rect.right - 66, rect.y + 14, 46, 38)
         pygame.draw.rect(self.screen, PANEL_DARK, key_rect, border_radius=5)
         pygame.draw.rect(self.screen, ACCENT_DARK, key_rect, width=2, border_radius=5)
         self._center_text(state.last_key or "-", self.font_key, TEXT, key_rect)
+
+    def _draw_touch_controls(self, rect: pygame.Rect, state: DeviceState) -> None:
+        pygame.draw.rect(self.screen, PANEL, rect, border_radius=6)
+        self._text("触控控制", self.font_heading, TEXT, rect.x + 16, rect.y + 12)
+        self._text(
+            "点选灯位 · 点数值输入",
+            self.font_small,
+            MUTED,
+            rect.right - 170,
+            rect.y + 18,
+            max_width=154,
+        )
+
+        gap = 8
+        lamp_h = 180
+        intensity_h = 96
+        camera_h = rect.height - 44 - lamp_h - intensity_h - gap * 2
+        lamp_rect = pygame.Rect(rect.x + 12, rect.y + 44, rect.width - 24, lamp_h)
+        intensity_rect = pygame.Rect(
+            rect.x + 12,
+            lamp_rect.bottom + gap,
+            rect.width - 24,
+            intensity_h,
+        )
+        camera_rect = pygame.Rect(
+            rect.x + 12,
+            intensity_rect.bottom + gap,
+            rect.width - 24,
+            max(70, camera_h),
+        )
+
+        self._draw_lamp_touch_card(lamp_rect, state)
+        self._draw_intensity_touch_card(intensity_rect, state)
+        self._draw_camera_touch_card(camera_rect, state)
+
+    def _draw_lamp_touch_card(self, rect: pygame.Rect, state: DeviceState) -> None:
+        pygame.draw.rect(self.screen, PANEL_DARK, rect, border_radius=6)
+        pygame.draw.rect(self.screen, ACCENT_DARK, rect, width=1, border_radius=6)
+        title = "转盘灯位"
+        if state.motor_moving:
+            title += " · 转动中"
+        elif state.motor_ready:
+            title += " · 已到位"
+        else:
+            title += " · 待定位"
+        self._text(title, self.font_small, MUTED, rect.x + 12, rect.y + 9)
+        self._text(
+            f"目标 {state.motor_target_deg:.2f}° / 当前 {state.motor_position_deg:.2f}°",
+            self.font_small,
+            WARN if state.motor_moving else MUTED,
+            rect.x + 12,
+            rect.y + 31,
+            max_width=rect.width - 24,
+        )
+
+        grid_top = rect.y + 50
+        button_gap = 7
+        button_w = (rect.width - 28 - button_gap * 2) // 3
+        button_h = 37
+        for index, name in enumerate(LAMP_SHORT_NAMES):
+            column = index % 3
+            row = index // 3
+            button_rect = pygame.Rect(
+                rect.x + 14 + column * (button_w + button_gap),
+                grid_top + row * (button_h + button_gap),
+                button_w,
+                button_h,
+            )
+            selected = index == state.lamp_index
+            reached = index == state.active_lamp_index
+            subtext = "当前" if reached else f"{state.lamp_angles_deg[index]:.0f}°"
+            self._draw_touch_button(
+                button_rect,
+                name,
+                subtext,
+                active=selected,
+                accent=ACCENT if reached else WARN,
+            )
+            if not state.motor_adjustment_active:
+                self._add_touch_region("select_lamp", button_rect, index)
+
+        action_y = rect.bottom - 43
+        if state.motor_adjustment_active:
+            input_rect = pygame.Rect(rect.x + 12, action_y, 116, 34)
+            save_rect = pygame.Rect(input_rect.right + 8, action_y, 100, 34)
+            close_rect = pygame.Rect(save_rect.right + 8, action_y, rect.right - save_rect.right - 20, 34)
+            self._draw_touch_button(
+                input_rect,
+                "重新输入",
+                "角度",
+                active=not state.motor_moving,
+                disabled=state.motor_moving,
+            )
+            self._draw_touch_button(
+                save_rect,
+                "保存偏移",
+                "写入配置",
+                active=not state.motor_moving,
+                accent=ACCENT,
+                disabled=state.motor_moving,
+            )
+            self._draw_touch_button(close_rect, "退出", "不保存", accent=WARN)
+            if not state.motor_moving:
+                self._add_touch_region("open_angle_input", input_rect)
+            if not state.motor_moving:
+                self._add_touch_region("save_angle_offset", save_rect)
+            self._add_touch_region("close_angle_adjustment", close_rect)
+            if state.motor_adjustment_error:
+                self._text(
+                    state.motor_adjustment_error,
+                    self.font_small,
+                    WARN,
+                    rect.x + 12,
+                    action_y - 23,
+                    max_width=rect.width - 24,
+                )
+        else:
+            input_rect = pygame.Rect(rect.x + 12, action_y, rect.width - 24, 34)
+            self._draw_touch_button(
+                input_rect,
+                "输入转盘角度",
+                "弹出数字键盘",
+                active=False,
+                accent=WARN,
+            )
+            self._add_touch_region("open_angle_input", input_rect)
+
+    def _draw_intensity_touch_card(self, rect: pygame.Rect, state: DeviceState) -> None:
+        pygame.draw.rect(self.screen, PANEL_DARK, rect, border_radius=6)
+        pygame.draw.rect(self.screen, WARN if state.light_on else GRID, rect, width=1, border_radius=6)
+        self._text(
+            "PWM 调光 · 灯亮" if state.light_on else "PWM 调光 · 灯灭",
+            self.font_small,
+            MUTED,
+            rect.x + 12,
+            rect.y + 9,
+        )
+
+        minus_rect = pygame.Rect(rect.x + 12, rect.y + 32, 48, 40)
+        plus_rect = pygame.Rect(rect.right - 60, rect.y + 32, 48, 40)
+        value_rect = pygame.Rect(minus_rect.right + 8, rect.y + 32, plus_rect.x - minus_rect.right - 16, 40)
+        self._draw_touch_button(minus_rect, "－", "-5%", accent=WARN)
+        self._draw_touch_button(plus_rect, "＋", "+5%", accent=WARN)
+        self._draw_touch_button(
+            value_rect,
+            f"{state.intensity_percent}%",
+            "点此输入 PWM",
+            active=True,
+            accent=WARN,
+        )
+        self._add_touch_region("intensity_down", minus_rect)
+        self._add_touch_region("intensity_up", plus_rect)
+        self._add_touch_region("open_intensity_input", value_rect)
+
+        track_rect = pygame.Rect(rect.x + 14, rect.bottom - 20, rect.width - 28, 10)
+        pygame.draw.rect(self.screen, GRID, track_rect, border_radius=5)
+        fill_rect = track_rect.copy()
+        fill_rect.width = round(track_rect.width * state.intensity_percent / 100)
+        if fill_rect.width:
+            pygame.draw.rect(self.screen, WARN, fill_rect, border_radius=5)
+        thumb_x = track_rect.x + fill_rect.width
+        pygame.draw.circle(self.screen, TEXT, (thumb_x, track_rect.centery), 9)
+        self._add_touch_region("intensity_slider", track_rect.inflate(0, 26))
+
+    def _draw_camera_touch_card(self, rect: pygame.Rect, state: DeviceState) -> None:
+        pygame.draw.rect(self.screen, PANEL_DARK, rect, border_radius=6)
+        status = (
+            "已连接"
+            if state.camera_ready
+            else "异常"
+            if state.camera_error
+            else "连接中"
+            if state.camera_enabled
+            else "已关闭"
+        )
+        self._text("摄像画面", self.font_small, MUTED, rect.x + 12, rect.y + 9)
+        self._text(
+            status,
+            self.font_small,
+            ACCENT if state.camera_ready else WARN if state.camera_enabled else MUTED,
+            rect.right - 66,
+            rect.y + 9,
+            max_width=54,
+        )
+        gap = 8
+        button_y = rect.y + 30
+        button_h = max(30, rect.bottom - button_y - 8)
+        button_w = (rect.width - 24 - gap * 2) // 3
+        toggle_rect = pygame.Rect(rect.x + 12, button_y, button_w, button_h)
+        small_rect = pygame.Rect(toggle_rect.right + gap, button_y, button_w, button_h)
+        full_rect = pygame.Rect(small_rect.right + gap, button_y, rect.right - small_rect.right - gap - 12, button_h)
+        self._draw_touch_button(
+            toggle_rect,
+            "开启" if not state.camera_enabled else "关闭",
+            "摄像",
+            active=state.camera_enabled,
+        )
+        self._draw_touch_button(
+            small_rect,
+            "小窗",
+            "曲线叠加",
+            active=state.camera_view_mode == "small",
+        )
+        self._draw_touch_button(
+            full_rect,
+            "全屏",
+            "右侧画面",
+            active=state.camera_view_mode == "full",
+        )
+        self._add_touch_region("toggle_camera", toggle_rect)
+        self._add_touch_region("camera_view_small", small_rect)
+        self._add_touch_region("camera_view_full", full_rect)
+
+    def _draw_touch_toolbar(self, rect: pygame.Rect, state: DeviceState) -> None:
+        pygame.draw.rect(self.screen, PANEL, rect, border_radius=6)
+        inner = rect.inflate(-12, -12)
+        gap = 8
+        actions = (
+            (
+                "toggle_measurement",
+                "暂停测量" if state.measuring else "开始测量",
+                "ADS1256",
+                state.measuring,
+                ACCENT,
+            ),
+            ("clear_curve", "清空曲线", f"{len(state.samples)} 点", False, ERROR),
+            (
+                "toggle_fft",
+                "关闭 FFT" if state.fft_visible else "打开 FFT",
+                "频谱分析",
+                state.fft_visible,
+                WARN,
+            ),
+            (
+                "toggle_camera",
+                "关闭摄像" if state.camera_enabled else "开启摄像",
+                state.camera_view_name,
+                state.camera_enabled,
+                ACCENT,
+            ),
+            (
+                "toggle_camera_view",
+                "全屏画面" if state.camera_view_mode == "small" else "小窗画面",
+                "摄像布局",
+                False,
+                ACCENT,
+            ),
+        )
+        button_w = (inner.width - gap * (len(actions) - 1)) // len(actions)
+        x = inner.x
+        for action, label, subtext, active, accent in actions:
+            button_rect = pygame.Rect(x, inner.y, button_w, inner.height)
+            self._draw_touch_button(
+                button_rect,
+                label,
+                subtext,
+                active=active,
+                accent=accent,
+                danger=action == "clear_curve",
+            )
+            self._add_touch_region(action, button_rect)
+            x += button_w + gap
+
+    def _draw_numeric_overlay(self, state: DeviceState) -> None:
+        width, height = self.screen.get_size()
+        self._add_touch_region("modal_block", pygame.Rect(0, 0, width, height))
+        scrim = pygame.Surface((width, height), pygame.SRCALPHA)
+        scrim.fill((0, 0, 0, 178))
+        self.screen.blit(scrim, (0, 0))
+
+        panel = pygame.Rect((width - 620) // 2, 62, 620, height - 94)
+        pygame.draw.rect(self.screen, PANEL, panel, border_radius=9)
+        pygame.draw.rect(self.screen, ACCENT, panel, width=2, border_radius=9)
+
+        is_angle = state.touch_input_kind == TOUCH_INPUT_ANGLE
+        title = "转盘角度输入" if is_angle else "PWM 光强输入"
+        range_text = "范围 0~360°，A/确认后开始转动" if is_angle else "范围 0~100%，整数百分比"
+        value_suffix = "°" if is_angle else "%"
+        self._text(title, self.font_title, TEXT, panel.x + 24, panel.y + 18)
+        self._text(range_text, self.font_body, MUTED, panel.x + 24, panel.y + 58)
+
+        value_rect = pygame.Rect(panel.x + 24, panel.y + 88, panel.width - 48, 62)
+        pygame.draw.rect(self.screen, PANEL_DARK, value_rect, border_radius=6)
+        pygame.draw.rect(self.screen, WARN if state.touch_input_error else ACCENT, value_rect, width=2, border_radius=6)
+        value_text = state.touch_input_value or "--"
+        self._center_text(f"{value_text}{value_suffix}", self.font_title, TEXT, value_rect)
+        if state.touch_input_error:
+            self._text(
+                state.touch_input_error,
+                self.font_small,
+                WARN,
+                value_rect.x + 8,
+                value_rect.bottom + 7,
+                max_width=value_rect.width - 16,
+            )
+
+        key_gap = 10
+        key_w = 96
+        key_h = 58
+        key_x = panel.x + 24
+        key_y = panel.y + 178
+        keys = (
+            ("1", "2", "3"),
+            ("4", "5", "6"),
+            ("7", "8", "9"),
+            ("." if is_angle else "", "0", "⌫"),
+        )
+        for row, row_keys in enumerate(keys):
+            for column, key in enumerate(row_keys):
+                key_rect = pygame.Rect(
+                    key_x + column * (key_w + key_gap),
+                    key_y + row * (key_h + key_gap),
+                    key_w,
+                    key_h,
+                )
+                if not key:
+                    self._draw_touch_button(key_rect, "—", "", disabled=True)
+                    continue
+                if key == "⌫":
+                    self._draw_touch_button(key_rect, "退格", "C", accent=WARN)
+                    self._add_touch_region("numeric_backspace", key_rect)
+                else:
+                    self._draw_touch_button(key_rect, key, "", active=True)
+                    self._add_touch_region("numeric_token", key_rect, key)
+
+        side_x = key_x + 3 * (key_w + key_gap) + 16
+        side_w = panel.right - side_x - 24
+        confirm_rect = pygame.Rect(side_x, key_y, side_w, key_h * 2 + key_gap)
+        clear_rect = pygame.Rect(side_x, confirm_rect.bottom + key_gap, side_w, key_h)
+        cancel_rect = pygame.Rect(side_x, clear_rect.bottom + key_gap, side_w, key_h)
+        self._draw_touch_button(confirm_rect, "确认", "A", active=True, accent=ACCENT)
+        self._draw_touch_button(clear_rect, "清空", "D", accent=WARN)
+        self._draw_touch_button(cancel_rect, "取消", "#", danger=True, accent=ERROR)
+        self._add_touch_region("numeric_submit", confirm_rect)
+        self._add_touch_region("numeric_clear", clear_rect)
+        self._add_touch_region("numeric_cancel", cancel_rect)
+
+        hint = "物理矩阵键盘现在只在这个数字输入界面生效"
+        self._center_text(
+            hint,
+            self.font_small,
+            MUTED,
+            pygame.Rect(panel.x + 24, panel.bottom - 34, panel.width - 48, 22),
+        )
+
+    def _draw_touch_button(
+        self,
+        rect: pygame.Rect,
+        label: str,
+        subtext: str = "",
+        *,
+        active: bool = False,
+        accent: tuple[int, int, int] = ACCENT,
+        danger: bool = False,
+        disabled: bool = False,
+    ) -> None:
+        fill = PANEL_ACTIVE if active else PANEL
+        border = ERROR if danger else accent if active else GRID
+        if disabled:
+            fill = PANEL_DARK
+            border = GRID
+        pygame.draw.rect(self.screen, fill, rect, border_radius=6)
+        pygame.draw.rect(self.screen, border, rect, width=2 if active or danger else 1, border_radius=6)
+        label_color = MUTED if disabled else TEXT
+        sub_color = MUTED if disabled else accent if active else MUTED
+        if subtext:
+            self._center_text(
+                label,
+                self.font_body if len(label) <= 6 else self.font_small,
+                label_color,
+                pygame.Rect(rect.x + 4, rect.y + 5, rect.width - 8, rect.height // 2),
+            )
+            self._center_text(
+                subtext,
+                self.font_small,
+                sub_color,
+                pygame.Rect(rect.x + 4, rect.centery, rect.width - 8, rect.height // 2 - 3),
+            )
+        else:
+            self._center_text(
+                label,
+                self.font_heading if len(label) <= 3 else self.font_body,
+                label_color,
+                rect,
+            )
 
     def _draw_controls(self, rect: pygame.Rect, state: DeviceState) -> None:
         pygame.draw.rect(self.screen, PANEL, rect, border_radius=6)
