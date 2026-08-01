@@ -92,6 +92,25 @@ DRATE_10SPS = 0x23
 DRATE_5SPS = 0x13
 DRATE_2SPS = 0x03
 
+SPS_BY_DRATE = {
+    DRATE_30000SPS: 30000.0,
+    DRATE_15000SPS: 15000.0,
+    DRATE_7500SPS: 7500.0,
+    DRATE_3750SPS: 3750.0,
+    DRATE_2000SPS: 2000.0,
+    DRATE_1000SPS: 1000.0,
+    DRATE_500SPS: 500.0,
+    DRATE_100SPS: 100.0,
+    DRATE_60SPS: 60.0,
+    DRATE_50SPS: 50.0,
+    DRATE_30SPS: 30.0,
+    DRATE_25SPS: 25.0,
+    DRATE_15SPS: 15.0,
+    DRATE_10SPS: 10.0,
+    DRATE_5SPS: 5.0,
+    DRATE_2SPS: 2.5,
+}
+
 RDATA = 0x01
 SDATAC = 0x0F
 RREG = 0x10
@@ -285,6 +304,31 @@ class ADS1256BitBang:
             if self.read(self.pins.drdy) != 0:
                 return True
             time.sleep(0.00005)
+        return False
+
+    def wait_drdy_restart(
+        self,
+        label: str,
+        timeout_s: float = 2.0,
+        fallback_s: float = 0.1,
+    ) -> bool:
+        """Wait for a conversion restart to settle.
+
+        Some ADS1256 breakout/module combinations keep DRDY low or expose a
+        high pulse too short for Linux bit-banged polling to reliably catch.
+        Prefer the datasheet high-then-low sequence, but fall back to a
+        conservative delay and a final low-level check so initialization is
+        driven by register readback instead of a missed DRDY edge.
+        """
+        high_seen = self.wait_drdy_high(min(timeout_s, 0.15))
+        if high_seen:
+            if not self.wait_drdy_low(timeout_s):
+                raise TimeoutError(f"DRDY did not go low after {label}")
+            return True
+
+        time.sleep(fallback_s)
+        if not self.wait_drdy_low(timeout_s):
+            raise TimeoutError(f"DRDY did not go low after {label}")
         return False
 
     def transfer_byte(self, value: int) -> int:
@@ -495,12 +539,14 @@ class ADS1256BitBang:
 
         if selfcal:
             self.direct_command(SELFCAL, timeout_s=timeout_s)
-            if not self.wait_drdy_high(timeout_s):
-                raise TimeoutError("DRDY did not go high after SELFCAL")
-            if not self.wait_drdy_low(timeout_s):
-                raise TimeoutError("DRDY did not go low after SELFCAL")
+            calibration_settle_s = max(0.2, min(1.0, 8.0 * drate_period_seconds(drate)))
+            self.wait_drdy_restart(
+                "SELFCAL",
+                timeout_s=timeout_s,
+                fallback_s=calibration_settle_s,
+            )
 
-        self.sync_wakeup(timeout_s=timeout_s)
+        self.sync_wakeup(timeout_s=timeout_s, settle_s=max(0.05, 2.0 * drate_period_seconds(drate)))
 
     def set_adcon_options(
         self,
@@ -535,7 +581,7 @@ class ADS1256BitBang:
         self.transfer_byte(WAKEUP)
         self.cs_high()
 
-    def sync_wakeup(self, timeout_s: float = 2.0) -> None:
+    def sync_wakeup(self, timeout_s: float = 2.0, settle_s: float = 0.05) -> None:
         if not self.wait_drdy_low(timeout_s):
             raise TimeoutError("DRDY did not go low before SYNC/WAKEUP")
         self.cs_low()
@@ -543,10 +589,7 @@ class ADS1256BitBang:
         self.delay_us(5)
         self.transfer_byte(WAKEUP)
         self.cs_high()
-        if not self.wait_drdy_high(timeout_s):
-            raise TimeoutError("DRDY did not go high after SYNC/WAKEUP")
-        if not self.wait_drdy_low(timeout_s):
-            raise TimeoutError("DRDY did not go low after SYNC/WAKEUP")
+        self.wait_drdy_restart("SYNC/WAKEUP", timeout_s=timeout_s, fallback_s=settle_s)
 
     def read_single_raw(self, timeout_s: float = 2.0) -> int:
         if not self.wait_drdy_low(timeout_s):
@@ -659,6 +702,11 @@ def reverse_byte(value: int) -> int:
         result = (result << 1) | (value & 0x01)
         value >>= 1
     return result
+
+
+def drate_period_seconds(drate: int) -> float:
+    sps = SPS_BY_DRATE.get(drate & 0xFF, 30.0)
+    return 1.0 / sps
 
 
 def raw_to_voltage(raw: int, vref: float = 2.5, pga: int = PGA_1) -> float:
