@@ -80,27 +80,10 @@ def _touch_position_from_event(
 ) -> tuple[int, int] | None:
     if event.type == pygame.MOUSEBUTTONUP and getattr(event, "button", 0) == 1:
         return int(event.pos[0]), int(event.pos[1])
+    if event.type == pygame.FINGERUP:
+        width, height = screen.get_size()
+        return int(event.x * width), int(event.y * height)
     return None
-
-
-def _finger_position_from_event(
-    event: pygame.event.Event,
-    screen: pygame.Surface,
-) -> tuple[int, int]:
-    width, height = screen.get_size()
-    return int(event.x * width), int(event.y * height)
-
-
-def _finger_vector(
-    active_fingers: dict[int, tuple[int, int]],
-) -> tuple[float, float] | None:
-    if len(active_fingers) < 2:
-        return None
-    positions = list(active_fingers.values())[:2]
-    return (
-        float(positions[1][0] - positions[0][0]),
-        float(positions[1][1] - positions[0][1]),
-    )
 
 
 def _is_duplicate_touch(
@@ -180,6 +163,14 @@ def _dispatch_touch_action(
         controller.select_previous_camera_mode()
     elif action == "camera_next_mode":
         controller.select_next_camera_mode()
+    elif action == "time_zoom_out":
+        controller.adjust_time_zoom(-1)
+    elif action == "time_zoom_in":
+        controller.adjust_time_zoom(1)
+    elif action == "voltage_zoom_out":
+        controller.adjust_voltage_zoom(-1)
+    elif action == "voltage_zoom_in":
+        controller.adjust_voltage_zoom(1)
 
 
 def run_app(config: AppConfig) -> int:
@@ -373,62 +364,17 @@ def run_app(config: AppConfig) -> int:
         running = True
         last_touch_at_s = 0.0
         last_touch_position = (-10000, -10000)
-        active_fingers: dict[int, tuple[int, int]] = {}
-        suppressed_finger_ids: set[int] = set()
-        last_gesture_vector: tuple[float, float] | None = None
-        recent_gesture_at_s = 0.0
         while running:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     running = False
-                elif event.type == pygame.FINGERDOWN:
-                    finger_id = int(event.finger_id)
-                    active_fingers[finger_id] = _finger_position_from_event(event, screen)
-                    if len(active_fingers) >= 2 and not state.touch_input_active:
-                        suppressed_finger_ids.update(active_fingers)
-                        last_gesture_vector = _finger_vector(active_fingers)
-                elif event.type == pygame.FINGERMOTION:
-                    finger_id = int(event.finger_id)
-                    active_fingers[finger_id] = _finger_position_from_event(event, screen)
-                    if len(active_fingers) >= 2 and not state.touch_input_active:
-                        current_vector = _finger_vector(active_fingers)
-                        if (
-                            current_vector is not None
-                            and last_gesture_vector is not None
-                        ):
-                            controller.apply_plot_pinch(
-                                last_gesture_vector,
-                                current_vector,
-                            )
-                            recent_gesture_at_s = time.monotonic()
-                        last_gesture_vector = current_vector
-                        suppressed_finger_ids.update(active_fingers)
-                elif event.type == pygame.FINGERUP:
-                    finger_id = int(event.finger_id)
-                    touch_position = _finger_position_from_event(event, screen)
-                    was_suppressed = finger_id in suppressed_finger_ids
-                    active_fingers.pop(finger_id, None)
-                    suppressed_finger_ids.discard(finger_id)
-                    if len(active_fingers) < 2:
-                        last_gesture_vector = None
-                    if not was_suppressed and not _is_duplicate_touch(
-                        touch_position,
-                        last_touch_position,
-                        last_touch_at_s,
-                    ):
-                        _dispatch_touch_action(view, controller, touch_position)
-                        last_touch_position = touch_position
-                        last_touch_at_s = time.monotonic()
                 elif (
                     touch_position := _touch_position_from_event(event, screen)
                 ) is not None:
-                    if (
-                        time.monotonic() - recent_gesture_at_s > 0.2
-                        and not _is_duplicate_touch(
+                    if not _is_duplicate_touch(
                         touch_position,
                         last_touch_position,
                         last_touch_at_s,
-                        )
                     ):
                         _dispatch_touch_action(view, controller, touch_position)
                         last_touch_position = touch_position

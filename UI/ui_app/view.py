@@ -137,6 +137,8 @@ class MainView:
         print(f"[UI] Chinese font={chinese_path}", flush=True)
         print(f"[UI] Latin font={latin_path}", flush=True)
         self.font_title = self._make_font(chinese_path, latin_path, 30, bold=True)
+        self.font_display = self._make_font(chinese_path, latin_path, 48, bold=True)
+        self.font_button_big = self._make_font(chinese_path, latin_path, 34, bold=True)
         self.font_value = self._make_font(chinese_path, latin_path, 28, bold=True)
         self.font_heading = self._make_font(chinese_path, latin_path, 22, bold=True)
         self.font_body = self._make_font(chinese_path, latin_path, 18)
@@ -197,13 +199,19 @@ class MainView:
         items: list[SelfTestItem],
         summary: str = "正在检查硬件连接",
     ) -> None:
-        self.screen.fill(BG)
+        bg_top = (34, 91, 169)
+        bg_bottom = (18, 62, 128)
+        self._fill_vertical_gradient(self.screen.get_rect(), bg_top, bg_bottom)
+        st_text = (255, 255, 255)
+        st_muted = (232, 240, 255)
+        st_line = (130, 180, 238)
+        st_pending = (170, 195, 230)
         width, height = self.screen.get_size()
         content_width = min(860, width - 80)
         left = (width - content_width) // 2
 
-        self._text("系统启动自检", self.font_title, TEXT, left, 36)
-        self._text(summary, self.font_body, MUTED, left, 82, max_width=content_width)
+        self._text("系统启动自检", self.font_title, st_text, left, 36)
+        self._text(summary, self.font_body, st_muted, left, 82, max_width=content_width)
 
         completed = sum(
             item.status in (SELF_TEST_PASSED, SELF_TEST_FAILED)
@@ -211,7 +219,7 @@ class MainView:
         )
         progress = completed / max(1, len(items))
         progress_rect = pygame.Rect(left, 116, content_width, 8)
-        pygame.draw.rect(self.screen, GRID, progress_rect, border_radius=4)
+        pygame.draw.rect(self.screen, (170, 201, 242), progress_rect, border_radius=4)
         if progress > 0:
             fill_rect = pygame.Rect(
                 progress_rect.x,
@@ -219,7 +227,8 @@ class MainView:
                 max(8, round(progress_rect.width * progress)),
                 progress_rect.height,
             )
-            pygame.draw.rect(self.screen, ACCENT, fill_rect, border_radius=4)
+            pygame.draw.rect(self.screen, (255, 211, 74), fill_rect, border_radius=4)
+            pygame.draw.rect(self.screen, (255, 248, 190), fill_rect.inflate(0, -4), border_radius=2)
 
         status_names = {
             "pending": "等待",
@@ -228,10 +237,10 @@ class MainView:
             SELF_TEST_FAILED: "异常",
         }
         status_colors = {
-            "pending": MUTED,
-            SELF_TEST_RUNNING: WARN,
-            SELF_TEST_PASSED: ACCENT,
-            SELF_TEST_FAILED: ERROR,
+            "pending": st_pending,
+            SELF_TEST_RUNNING: (255, 218, 96),
+            SELF_TEST_PASSED: (111, 255, 171),
+            SELF_TEST_FAILED: (255, 124, 124),
         }
         row_top = 148
         row_height = 60
@@ -239,11 +248,11 @@ class MainView:
             y = row_top + index * row_height
             color = status_colors[item.status]
             pygame.draw.circle(self.screen, color, (left + 10, y + 22), 6)
-            self._text(item.label, self.font_body, TEXT, left + 30, y + 9)
+            self._text(item.label, self.font_body, st_text, left + 30, y + 9)
             self._text(
                 item.detail,
                 self.font_small,
-                MUTED if item.status != SELF_TEST_FAILED else ERROR,
+                st_muted if item.status != SELF_TEST_FAILED else status_colors[SELF_TEST_FAILED],
                 left + 250,
                 y + 12,
                 max_width=content_width - 350,
@@ -259,7 +268,7 @@ class MainView:
             )
             pygame.draw.line(
                 self.screen,
-                GRID,
+                st_line,
                 (left, y + row_height - 5),
                 (left + content_width, y + row_height - 5),
                 1,
@@ -270,7 +279,7 @@ class MainView:
         self._text(
             footer,
             self.font_small,
-            MUTED,
+            st_muted,
             left + content_width - footer_width,
             height - 46,
         )
@@ -284,18 +293,7 @@ class MainView:
             (rect.x + 4, rect.y + 4, 6, rect.height - 8),
             border_radius=2,
         )
-        self._text("光电流激发与测量系统", self.font_title, TEXT, rect.x + 20, rect.y + 8)
-
-        status_color = ACCENT if state.measuring else WARN
-        pygame.draw.circle(self.screen, status_color, (rect.x + 29, rect.bottom - 17), 5)
-        self._text(
-            state.status,
-            self.font_small,
-            MUTED,
-            rect.x + 40,
-            rect.bottom - 27,
-            max_width=510,
-        )
+        self._text("光电流激发与测量系统", self.font_title, TEXT, rect.x + 20, rect.y + 16)
 
         button_gap = 8
         button_w = 124
@@ -304,14 +302,12 @@ class MainView:
         self._draw_touch_button(
             measure_rect,
             "暂停测量" if state.measuring else "开始测量",
-            "MEASURE",
             active=state.measuring,
             accent=ACCENT,
         )
         self._draw_touch_button(
             clear_rect,
             "清空曲线",
-            f"{len(state.samples)} 点",
             danger=True,
             accent=ERROR,
         )
@@ -348,11 +344,11 @@ class MainView:
             rect,
             title="灯位转盘",
             subtitle=subtitle,
-            left_label="◀",
+            left_label="<",
             left_subtitle=LAMP_SHORT_NAMES[(state.lamp_index - 1) % len(LAMP_SHORT_NAMES)],
             center_label=center_title,
             center_subtitle=center_subtitle,
-            right_label="▶",
+            right_label=">",
             right_subtitle=LAMP_SHORT_NAMES[(state.lamp_index + 1) % len(LAMP_SHORT_NAMES)],
             left_action="lamp_previous",
             center_action="open_angle_page",
@@ -370,7 +366,7 @@ class MainView:
             left_label="－",
             left_subtitle=step_text,
             center_label=f"{self._format_percent(state.intensity_percent)}%",
-            center_subtitle="",
+            center_subtitle="当前亮度",
             right_label="＋",
             right_subtitle=step_text,
             left_action="pwm_down",
@@ -401,11 +397,11 @@ class MainView:
             rect,
             title="摄像画面",
             subtitle=subtitle,
-            left_label="◀",
+            left_label="<",
             left_subtitle="模式",
             center_label=mode_label,
-            center_subtitle="",
-            right_label="▶",
+            center_subtitle=subtitle,
+            right_label=">",
             right_subtitle="模式",
             left_action="camera_previous_mode",
             center_action="toggle_camera",
@@ -435,12 +431,12 @@ class MainView:
     ) -> None:
         del state
         self._draw_beveled_panel(rect)
-        self._text(title, self.font_body, TEXT, rect.x + 12, rect.y + 9)
-        self._text(subtitle, self.font_small, MUTED, rect.x + 12, rect.y + 34, max_width=120)
+        title_text = f"[{subtitle}] {title}"
+        self._text(title_text, self.font_heading, TEXT, rect.x + 12, rect.y + 9)
         button_y = rect.y + 44
         button_h = rect.bottom - button_y - 10
-        side_w = 74
-        gap = 8
+        side_w = 86
+        gap = 9
         left_rect = pygame.Rect(rect.x + 12, button_y, side_w, button_h)
         right_rect = pygame.Rect(rect.right - 12 - side_w, button_y, side_w, button_h)
         center_rect = pygame.Rect(
@@ -449,18 +445,71 @@ class MainView:
             right_rect.x - left_rect.right - gap * 2,
             button_h,
         )
-        self._draw_touch_button(left_rect, left_label, left_subtitle, accent=accent)
-        self._draw_touch_button(
+        self._draw_selector_button(
+            left_rect,
+            left_label,
+            left_subtitle,
+            accent=accent,
+            arrow=True,
+        )
+        self._draw_selector_button(
             center_rect,
             center_label,
             center_subtitle,
             active=center_active,
             accent=accent,
         )
-        self._draw_touch_button(right_rect, right_label, right_subtitle, accent=accent)
+        self._draw_selector_button(
+            right_rect,
+            right_label,
+            right_subtitle,
+            accent=accent,
+            arrow=True,
+        )
         self._add_touch_region(left_action, left_rect)
         self._add_touch_region(center_action, center_rect)
         self._add_touch_region(right_action, right_rect)
+
+    def _draw_selector_button(
+        self,
+        rect: pygame.Rect,
+        label: str,
+        subtext: str,
+        *,
+        active: bool = False,
+        accent: tuple[int, int, int] = ACCENT,
+        arrow: bool = False,
+        disabled: bool = False,
+    ) -> None:
+        self._draw_touch_button(
+            rect,
+            "",
+            "",
+            active=active,
+            accent=accent,
+            disabled=disabled,
+        )
+        split_y = rect.y + round(rect.height * 0.62)
+        pygame.draw.line(
+            self.screen,
+            (96, 134, 191),
+            (rect.x + 6, split_y),
+            (rect.right - 7, split_y),
+            1,
+        )
+        top_rect = pygame.Rect(rect.x + 4, rect.y + 5, rect.width - 8, split_y - rect.y - 8)
+        bottom_rect = pygame.Rect(rect.x + 4, split_y + 2, rect.width - 8, rect.bottom - split_y - 6)
+        top_font = self.font_button_big if arrow else self.font_display
+        if not arrow and self.font_display.size(label)[0] > top_rect.width - 8:
+            top_font = self.font_button_big
+        if arrow:
+            top_font = self.font_display
+        self._center_text(label, top_font, TEXT if not disabled else MUTED, top_rect)
+        if subtext:
+            sub_font = self.font_heading if arrow else self.font_body
+            if not arrow and self.font_heading.size(subtext)[0] <= bottom_rect.width - 10:
+                sub_font = self.font_heading
+            self._center_text(subtext, sub_font, MUTED if not active else ACCENT_DARK, bottom_rect)
 
     def _draw_angle_touch_page(self, rect: pygame.Rect, state: DeviceState) -> None:
         self._draw_beveled_panel(rect)
@@ -1274,7 +1323,22 @@ class MainView:
         self.screen.blit(value_surface, (rect.right - value_surface.get_width() - 18, rect.y + 10))
 
         samples = self._select_chart_samples(state)
-        plot = pygame.Rect(rect.x + 20, rect.y + 60, rect.width - 40, rect.height - 112)
+        metrics_y = rect.y + 50
+        metric_h = 38
+        zoom_h = 44
+        zoom_y = rect.bottom - zoom_h - 10
+        plot_y = metrics_y + metric_h + 10
+        plot = pygame.Rect(
+            rect.x + 20,
+            plot_y,
+            rect.width - 40,
+            max(80, zoom_y - plot_y - 10),
+        )
+        self._draw_chart_metrics(
+            pygame.Rect(rect.x + 20, metrics_y, rect.width - 40, metric_h),
+            state,
+            samples,
+        )
         self._draw_time_plot(
             plot,
             samples,
@@ -1282,19 +1346,20 @@ class MainView:
             voltage_zoom=state.plot_voltage_zoom,
         )
 
-        elapsed = samples[-1].timestamp_s if samples else 0.0
-        self._text(
-            f"采样点：{len(state.samples)}  已滤尖峰：{state.rejected_spikes}",
-            self.font_small,
-            MUTED,
-            rect.x + 20,
-            rect.bottom - 22,
-        )
-        elapsed_surface = self.font_small.render(f"测量时间：{elapsed:0.1f} 秒", True, MUTED)
-        self.screen.blit(elapsed_surface, (rect.right - elapsed_surface.get_width() - 20, rect.bottom - 22))
-
         if state.camera_visible and state.camera_view_mode == "small":
-            self._draw_camera_thumbnail(rect, state)
+            camera_viewport = self._draw_camera_thumbnail(plot, state)
+            status_rect = pygame.Rect(
+                camera_viewport.x,
+                min(camera_viewport.bottom + 6, plot.bottom - 32),
+                camera_viewport.width,
+                28,
+            )
+        else:
+            status_rect = pygame.Rect(plot.x + 8, plot.bottom - 36, plot.width - 16, 28)
+        self._draw_status_ticker(status_rect, state)
+        self._draw_chart_zoom_buttons(
+            pygame.Rect(rect.x + 20, zoom_y, rect.width - 40, zoom_h)
+        )
 
     def _select_chart_samples(self, state: DeviceState) -> list:
         if not state.samples:
@@ -1303,8 +1368,85 @@ class MainView:
         target_count = max(30, min(600, target_count))
         return state.samples[-target_count:]
 
+    def _draw_chart_metrics(
+        self,
+        rect: pygame.Rect,
+        state: DeviceState,
+        samples: list,
+    ) -> None:
+        elapsed = state.samples[-1].timestamp_s if state.samples else 0.0
+        v_div, ms_div = self._chart_divisions(samples, state)
+        entries = (
+            ("采样点", str(len(state.samples))),
+            ("已滤尖峰", str(state.rejected_spikes)),
+            ("测量时间", f"{elapsed:.1f}s"),
+            ("v/div", f"{v_div:.3g}mV"),
+            ("ms/div", f"{ms_div:.3g}"),
+        )
+        gap = 7
+        item_w = (rect.width - gap * (len(entries) - 1)) // len(entries)
+        x = rect.x
+        for label, value in entries:
+            item_rect = pygame.Rect(x, rect.y, item_w, rect.height)
+            self._draw_metric_box(item_rect, label, value)
+            x += item_w + gap
+
+    def _draw_metric_box(self, rect: pygame.Rect, label: str, value: str) -> None:
+        self._fill_vertical_gradient(rect, (252, 254, 255), (199, 222, 250))
+        pygame.draw.rect(self.screen, ACCENT_DARK, rect, width=1, border_radius=4)
+        self._text(label, self.font_small, MUTED, rect.x + 6, rect.y + 3, max_width=rect.width - 12)
+        self._text(value, self.font_small, TEXT, rect.x + 6, rect.y + 19, max_width=rect.width - 12)
+
+    def _chart_divisions(self, samples: list, state: DeviceState) -> tuple[float, float]:
+        if len(samples) >= 2:
+            values = [sample.voltage_mv for sample in samples]
+            span = max(max(values) - min(values), 1.0)
+            visible_span = max(1.0, span * 1.16 / max(0.35, state.plot_voltage_zoom))
+            time_span_s = max(samples[-1].timestamp_s - samples[0].timestamp_s, 0.001)
+        else:
+            visible_span = 1.0 / max(0.35, state.plot_voltage_zoom)
+            time_span_s = 1.0 / max(0.35, state.plot_time_zoom)
+        return visible_span / 5.0, time_span_s * 1000.0 / 6.0
+
+    def _draw_chart_zoom_buttons(self, rect: pygame.Rect) -> None:
+        actions = (
+            ("time_zoom_out", "时间－"),
+            ("time_zoom_in", "时间＋"),
+            ("voltage_zoom_out", "电压－"),
+            ("voltage_zoom_in", "电压＋"),
+        )
+        gap = 9
+        button_w = (rect.width - gap * (len(actions) - 1)) // len(actions)
+        x = rect.x
+        for action, label in actions:
+            button_rect = pygame.Rect(x, rect.y, button_w, rect.height)
+            self._draw_touch_button(button_rect, label, accent=ACCENT)
+            self._add_touch_region(action, button_rect)
+            x += button_w + gap
+
+    def _draw_status_ticker(self, rect: pygame.Rect, state: DeviceState) -> None:
+        self._fill_vertical_gradient(rect, (250, 253, 255), (198, 222, 250))
+        pygame.draw.rect(self.screen, ACCENT_DARK, rect, width=1, border_radius=4)
+        text = state.status or "设备就绪"
+        surface = self.font_small.render(text, True, TEXT)
+        inner = rect.inflate(-12, -6)
+        previous_clip = self.screen.get_clip()
+        self.screen.set_clip(inner)
+        if surface.get_width() <= inner.width:
+            self.screen.blit(surface, (inner.x, inner.y + (inner.height - surface.get_height()) // 2))
+        else:
+            gap = 42
+            span = surface.get_width() + gap
+            offset = (pygame.time.get_ticks() // 28) % span
+            x = inner.x - offset
+            y = inner.y + (inner.height - surface.get_height()) // 2
+            while x < inner.right:
+                self.screen.blit(surface, (x, y))
+                x += span
+        self.screen.set_clip(previous_clip)
+
     def _draw_camera(self, rect: pygame.Rect, state: DeviceState) -> None:
-        pygame.draw.rect(self.screen, PANEL, rect, border_radius=6)
+        self._draw_beveled_panel(rect)
         self._text("USB实时摄像", self.font_heading, TEXT, rect.x + 16, rect.y + 13)
 
         status_text = "USB CAMERA · LIVE" if state.camera_ready else "USB CAMERA"
@@ -1319,7 +1461,7 @@ class MainView:
             rect.x + 18,
             rect.y + 55,
             rect.width - 36,
-            rect.height - 75,
+            rect.height - 118,
         )
         self._draw_camera_frame(viewport, state, compact=False)
 
@@ -1345,23 +1487,19 @@ class MainView:
             overlay.y + 10,
             max_width=overlay.width - 28,
         )
+        status_rect = pygame.Rect(viewport.x, viewport.bottom + 8, viewport.width, 30)
+        self._draw_status_ticker(status_rect, state)
 
     def _draw_camera_thumbnail(
         self,
-        chart_rect: pygame.Rect,
+        plot_area: pygame.Rect,
         state: DeviceState,
-    ) -> None:
-        plot_area = pygame.Rect(
-            chart_rect.x + 20,
-            chart_rect.y + 60,
-            chart_rect.width - 40,
-            chart_rect.height - 122,
-        )
+    ) -> pygame.Rect:
         viewport = pygame.Rect(
             plot_area.x,
             plot_area.y,
             max(1, plot_area.width // 2),
-            max(1, plot_area.height // 2),
+            max(1, min(plot_area.height // 2, plot_area.height - 44)),
         )
         self._draw_camera_frame(viewport, state, compact=True)
         pygame.draw.rect(self.screen, ACCENT_DARK, viewport, width=2, border_radius=4)
@@ -1385,6 +1523,7 @@ class MainView:
             status_bar.y + 5,
             max_width=status_bar.width - 31,
         )
+        return viewport
 
     def _draw_camera_frame(
         self,

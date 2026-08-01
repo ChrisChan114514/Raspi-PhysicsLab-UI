@@ -268,34 +268,6 @@ class ExperimentController:
     def select_next_camera_mode(self) -> None:
         self._select_camera_mode(1)
 
-    def apply_plot_pinch(
-        self,
-        previous_vector: tuple[float, float],
-        current_vector: tuple[float, float],
-    ) -> None:
-        previous_dx, previous_dy = previous_vector
-        current_dx, current_dy = current_vector
-        previous_x = max(20.0, abs(previous_dx))
-        current_x = max(20.0, abs(current_dx))
-        previous_y = max(20.0, abs(previous_dy))
-        current_y = max(20.0, abs(current_dy))
-        delta_x = abs(current_x - previous_x)
-        delta_y = abs(current_y - previous_y)
-        if max(delta_x, delta_y) < 4.0:
-            return
-        if delta_x >= delta_y:
-            ratio = current_x / previous_x
-            self.state.plot_time_zoom = self._clamp_zoom(
-                self.state.plot_time_zoom * ratio
-            )
-            self.state.status = f"时间轴缩放 ×{self.state.plot_time_zoom:.2f}"
-        else:
-            ratio = current_y / previous_y
-            self.state.plot_voltage_zoom = self._clamp_zoom(
-                self.state.plot_voltage_zoom * ratio
-            )
-            self.state.status = f"电压轴缩放 ×{self.state.plot_voltage_zoom:.2f}"
-
     def _select_camera_mode(self, direction: int) -> None:
         modes = ("off", "small", "full")
         if not self.state.camera_enabled:
@@ -313,6 +285,20 @@ class ExperimentController:
     @staticmethod
     def _clamp_zoom(value: float) -> float:
         return max(0.35, min(6.0, value))
+
+    def adjust_time_zoom(self, direction: int) -> None:
+        factor = 1.25 if direction > 0 else 0.8
+        self.state.plot_time_zoom = self._clamp_zoom(
+            self.state.plot_time_zoom * factor
+        )
+        self.state.status = f"时间轴缩放 ×{self.state.plot_time_zoom:.2f}"
+
+    def adjust_voltage_zoom(self, direction: int) -> None:
+        factor = 1.25 if direction > 0 else 0.8
+        self.state.plot_voltage_zoom = self._clamp_zoom(
+            self.state.plot_voltage_zoom * factor
+        )
+        self.state.status = f"电压轴缩放 ×{self.state.plot_voltage_zoom:.2f}"
 
     def toggle_camera_view_mode(self) -> None:
         self.set_camera_view_mode(
