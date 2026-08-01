@@ -49,15 +49,10 @@ STANDARD_KEYMAP = (
     ("*", "0", "#", "D"),
 )
 
-# Keymap corrected from the measured wiring result:
-# press 1->D, 2->C, 3->B, A->A, 4->#, 5->9, 6->6, B->3,
-# 7->0, 8->8, 9->5, C->2, *->*, 0->7, #->4, D->1.
-DEFAULT_KEYMAP = (
-    ("D", "C", "B", "A"),
-    ("#", "9", "6", "3"),
-    ("0", "8", "5", "2"),
-    ("*", "7", "4", "1"),
-)
+# Scanner output to physical key-label mapping, measured from this keypad:
+# D->1, C->2, B->3, #->4, 9->5, 6->6, 0->7, 8->8,
+# 5->9, 7->0, A->A, 3->B, 2->C, 1->D, 4->#, *->*.
+DEFAULT_KEYMAP = STANDARD_KEYMAP
 
 KEYMAPS = {
     "measured": DEFAULT_KEYMAP,
