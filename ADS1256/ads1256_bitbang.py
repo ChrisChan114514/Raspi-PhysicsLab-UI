@@ -51,14 +51,16 @@ IO_REG = 0x04
 ADCON_CLKOUT_OFF = 0x00
 ADCON_SDCS_OFF = 0x00
 
-SING_0 = 0x0F
-SING_1 = 0x1F
-SING_2 = 0x2F
-SING_3 = 0x3F
-SING_4 = 0x4F
-SING_5 = 0x5F
-SING_6 = 0x6F
-SING_7 = 0x7F
+AINCOM = 0x08
+
+SING_0 = 0x00 | AINCOM
+SING_1 = 0x10 | AINCOM
+SING_2 = 0x20 | AINCOM
+SING_3 = 0x30 | AINCOM
+SING_4 = 0x40 | AINCOM
+SING_5 = 0x50 | AINCOM
+SING_6 = 0x60 | AINCOM
+SING_7 = 0x70 | AINCOM
 
 DIFF_0_1 = 0x01
 DIFF_2_3 = 0x23
@@ -274,7 +276,15 @@ class ADS1256BitBang:
         while time.monotonic() < deadline:
             if self.read(self.pins.drdy) == 0:
                 return True
-            time.sleep(0.001)
+            time.sleep(0.00005)
+        return False
+
+    def wait_drdy_high(self, timeout_s: float = 2.0) -> bool:
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            if self.read(self.pins.drdy) != 0:
+                return True
+            time.sleep(0.00005)
         return False
 
     def transfer_byte(self, value: int) -> int:
@@ -303,6 +313,7 @@ class ADS1256BitBang:
         self.cs_low()
         self.transfer_byte(value)
         self.cs_high()
+        self.delay_us(10)
 
     def read_registers(
         self,
@@ -342,6 +353,7 @@ class ADS1256BitBang:
         for value in values:
             self.transfer_byte(value & 0xFF)
         self.cs_high()
+        self.delay_us(10)
 
     def write_register(self, register: int, value: int, timeout_s: float = 2.0) -> None:
         self.write_registers(register, [value], timeout_s=timeout_s)
@@ -404,23 +416,15 @@ class ADS1256BitBang:
         if pga not in PGA_GAIN_BY_CODE:
             raise ValueError("PGA code must be one of 0..6")
 
-        self.direct_command(SDATAC, timeout_s=timeout_s)
-        self.set_status_options(
+        self.configure_mux(
+            mux=SINGLE_ENDED_MUX[channel],
+            pga=pga,
+            drate=drate,
             buffer_enabled=buffer_enabled,
             autocal_enabled=autocal_enabled,
+            selfcal=selfcal,
             timeout_s=timeout_s,
         )
-        self.write_register(MUX_REG, SINGLE_ENDED_MUX[channel], timeout_s=timeout_s)
-
-        self.set_adcon_options(pga=pga, timeout_s=timeout_s)
-        self.write_register(DRATE_REG, drate, timeout_s=timeout_s)
-
-        if selfcal:
-            self.direct_command(SELFCAL, timeout_s=timeout_s)
-            if not self.wait_drdy_low(timeout_s):
-                raise TimeoutError("DRDY did not go low after SELFCAL")
-
-        self.sync_wakeup(timeout_s=timeout_s)
         self.verify_single_ended_configuration(
             channel=channel,
             pga=pga,
@@ -466,18 +470,22 @@ class ADS1256BitBang:
         if pga not in PGA_GAIN_BY_CODE:
             raise ValueError("PGA code must be one of 0..6")
 
+        status = (0x02 if buffer_enabled else 0x00) | (
+            0x04 if autocal_enabled else 0x00
+        )
+        adcon = ADCON_CLKOUT_OFF | ADCON_SDCS_OFF | (pga & 0x07)
+
         self.direct_command(SDATAC, timeout_s=timeout_s)
-        self.set_status_options(
-            buffer_enabled=buffer_enabled,
-            autocal_enabled=autocal_enabled,
+        self.write_registers(
+            STATUS_REG,
+            [status, mux & 0xFF, adcon, drate],
             timeout_s=timeout_s,
         )
-        self.write_register(MUX_REG, mux & 0xFF, timeout_s=timeout_s)
-        self.set_adcon_options(pga=pga, timeout_s=timeout_s)
-        self.write_register(DRATE_REG, drate, timeout_s=timeout_s)
 
         if selfcal:
             self.direct_command(SELFCAL, timeout_s=timeout_s)
+            if not self.wait_drdy_high(timeout_s):
+                raise TimeoutError("DRDY did not go high after SELFCAL")
             if not self.wait_drdy_low(timeout_s):
                 raise TimeoutError("DRDY did not go low after SELFCAL")
 
@@ -524,6 +532,10 @@ class ADS1256BitBang:
         self.delay_us(5)
         self.transfer_byte(WAKEUP)
         self.cs_high()
+        if not self.wait_drdy_high(timeout_s):
+            raise TimeoutError("DRDY did not go high after SYNC/WAKEUP")
+        if not self.wait_drdy_low(timeout_s):
+            raise TimeoutError("DRDY did not go low after SYNC/WAKEUP")
 
     def read_single_raw(self, timeout_s: float = 2.0) -> int:
         if not self.wait_drdy_low(timeout_s):
@@ -538,10 +550,6 @@ class ADS1256BitBang:
             | self.transfer_byte(0xFF)
         )
         self.cs_high()
-        if self.read(self.pins.drdy) == 0:
-            raise ADS1256ProtocolError(
-                "DRDY remained low after 24-bit RDATA; the software-SPI transaction lost alignment"
-            )
         return signed24_to_int(raw)
 
     def read_voltage(
