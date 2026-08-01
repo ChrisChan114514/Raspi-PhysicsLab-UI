@@ -112,7 +112,7 @@ class VoltagePollerThread:
         self._stop_event = threading.Event()
         self._context_lock = threading.Lock()
         self._lamp_index = 0
-        self._intensity_percent = 0
+        self._intensity_percent = 0.0
         self._thread = threading.Thread(target=self._run, name="ain0-voltage-poller", daemon=True)
 
     def start(self) -> None:
@@ -124,7 +124,7 @@ class VoltagePollerThread:
         else:
             self._enabled_event.clear()
 
-    def set_context(self, lamp_index: int, intensity_percent: int) -> None:
+    def set_context(self, lamp_index: int, intensity_percent: float) -> None:
         with self._context_lock:
             self._lamp_index = lamp_index
             self._intensity_percent = intensity_percent

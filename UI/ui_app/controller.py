@@ -8,10 +8,15 @@ from .analysis import FilterResult, SpikeRejectingVoltageFilter
 from .hardware import HardwareBundle, VoltageReading
 from .input import Button, ButtonEvent
 from .state import (
+    ANGLE_INPUT_MAX_DEG,
+    ANGLE_INPUT_MIN_DEG,
     CAMERA_VIEW_MODES,
     CONTROL_ITEMS,
     DEFAULT_LAMP_ANGLES_DEG,
     LAMP_NAMES,
+    PWM_INPUT_MAX_PERCENT,
+    PWM_INPUT_MIN_PERCENT,
+    PWM_STEP_OPTIONS_PERCENT,
     PWM_LAMP_INDICES,
     TOUCH_INPUT_ANGLE,
     TOUCH_INPUT_INTENSITY,
@@ -92,10 +97,12 @@ class ExperimentController:
             self.state.status = "LED PWM 自检未通过，无法输入光强"
             return
         self.state.touch_input_kind = TOUCH_INPUT_INTENSITY
-        self.state.touch_input_value = str(self.state.intensity_percent)
+        self.state.touch_input_value = self._format_percent(
+            self.state.intensity_percent
+        )
         self.state.touch_input_replace_input = True
         self.state.touch_input_error = ""
-        self.state.status = "输入 PWM 光强：0~100%"
+        self.state.status = "输入 PWM 光强"
 
     def handle_numeric_key(self, key: str) -> bool:
         if not self.state.touch_input_active:
@@ -123,17 +130,20 @@ class ExperimentController:
         if not self.state.touch_input_active:
             return
         kind = self.state.touch_input_kind
-        if token == "." and kind != TOUCH_INPUT_ANGLE:
-            self._set_touch_input_error("PWM 光强只能输入整数 0~100")
-            return
         if token == "." and "." in self.state.touch_input_value and not self.state.touch_input_replace_input:
             return
         if self.state.touch_input_replace_input:
             value_text = "0." if token == "." else token
         else:
             value_text = self.state.touch_input_value + token
-        if len(value_text) > (10 if kind == TOUCH_INPUT_ANGLE else 3):
+        if len(value_text) > (10 if kind == TOUCH_INPUT_ANGLE else 6):
             self._set_touch_input_error("输入值过长")
+            return
+        if kind == TOUCH_INPUT_INTENSITY and not self._percent_precision_ok(value_text):
+            self._set_touch_input_error("PWM 光强最多保留两位小数")
+            return
+        if kind == TOUCH_INPUT_ANGLE and not self._angle_precision_ok(value_text):
+            self._set_touch_input_error("角度最多保留两位小数")
             return
         self._set_touch_input_text(value_text)
         self.state.touch_input_replace_input = False
@@ -190,7 +200,7 @@ class ExperimentController:
             return True
 
         if kind == TOUCH_INPUT_INTENSITY:
-            self.set_intensity(round(value))
+            self.set_intensity(value)
             if not self.hardware.device_available("leds"):
                 return False
             self._close_touch_input()
@@ -218,9 +228,91 @@ class ExperimentController:
         self.state.lamp_arrow_focus = 0
         self.state.status = "角度调节已退出；未写入配置文件"
 
+    def adjust_motor_angle_delta(self, delta_deg: float) -> None:
+        if not self.state.motor_adjustment_active:
+            self.enter_motor_adjustment()
+        if not self.state.motor_adjustment_active:
+            return
+        if self.state.motor_moving:
+            self.state.motor_adjustment_error = "电机正在转动，到位后再调节"
+            self.state.status = self.state.motor_adjustment_error
+            return
+        target = self.state.motor_target_deg + delta_deg
+        target = max(ANGLE_INPUT_MIN_DEG, min(ANGLE_INPUT_MAX_DEG, target))
+        self.state.motor_adjustment_input = self._format_angle(target)
+        self._apply_manual_angle(target)
+
+    def cycle_pwm_step(self) -> None:
+        self.state.pwm_step_index = (
+            self.state.pwm_step_index + 1
+        ) % len(PWM_STEP_OPTIONS_PERCENT)
+        self.state.status = f"PWM 步进：{self._format_percent(self.state.pwm_step_percent)}%"
+
+    def adjust_intensity_by_step(self, direction: int) -> None:
+        step = self.state.pwm_step_percent
+        self.set_intensity(self.state.intensity_percent + direction * step)
+
     def set_intensity_from_slider(self, fraction: float) -> None:
-        percent = round(max(0.0, min(1.0, fraction)) * 100)
+        percent = round(max(0.0, min(1.0, fraction)) * 100, 2)
         self.set_intensity(percent)
+
+    def select_previous_lamp(self) -> None:
+        self.select_lamp(self.state.lamp_index - 1)
+
+    def select_next_lamp(self) -> None:
+        self.select_lamp(self.state.lamp_index + 1)
+
+    def select_previous_camera_mode(self) -> None:
+        self._select_camera_mode(-1)
+
+    def select_next_camera_mode(self) -> None:
+        self._select_camera_mode(1)
+
+    def apply_plot_pinch(
+        self,
+        previous_vector: tuple[float, float],
+        current_vector: tuple[float, float],
+    ) -> None:
+        previous_dx, previous_dy = previous_vector
+        current_dx, current_dy = current_vector
+        previous_x = max(20.0, abs(previous_dx))
+        current_x = max(20.0, abs(current_dx))
+        previous_y = max(20.0, abs(previous_dy))
+        current_y = max(20.0, abs(current_dy))
+        delta_x = abs(current_x - previous_x)
+        delta_y = abs(current_y - previous_y)
+        if max(delta_x, delta_y) < 4.0:
+            return
+        if delta_x >= delta_y:
+            ratio = current_x / previous_x
+            self.state.plot_time_zoom = self._clamp_zoom(
+                self.state.plot_time_zoom * ratio
+            )
+            self.state.status = f"时间轴缩放 ×{self.state.plot_time_zoom:.2f}"
+        else:
+            ratio = current_y / previous_y
+            self.state.plot_voltage_zoom = self._clamp_zoom(
+                self.state.plot_voltage_zoom * ratio
+            )
+            self.state.status = f"电压轴缩放 ×{self.state.plot_voltage_zoom:.2f}"
+
+    def _select_camera_mode(self, direction: int) -> None:
+        modes = ("off", "small", "full")
+        if not self.state.camera_enabled:
+            current_index = 0
+        else:
+            current_index = 1 if self.state.camera_view_mode == "small" else 2
+        target_mode = modes[(current_index + direction) % len(modes)]
+        if target_mode == "off":
+            self.set_camera_enabled(False)
+            return
+        self.set_camera_view_mode(target_mode)
+        if not self.state.camera_enabled:
+            self.set_camera_enabled(True)
+
+    @staticmethod
+    def _clamp_zoom(value: float) -> float:
+        return max(0.35, min(6.0, value))
 
     def toggle_camera_view_mode(self) -> None:
         self.set_camera_view_mode(
@@ -245,15 +337,26 @@ class ExperimentController:
                 angle_deg = float(value_text)
             except ValueError:
                 return "请输入有效角度"
-            if not math.isfinite(angle_deg) or not 0.0 <= angle_deg <= 360.0:
-                return "角度范围必须为 0~360°"
+            if (
+                not math.isfinite(angle_deg)
+                or not ANGLE_INPUT_MIN_DEG <= angle_deg <= ANGLE_INPUT_MAX_DEG
+            ):
+                return "角度范围必须为 0~369.99°"
+            if not self._angle_precision_ok(value_text):
+                return "角度最多保留两位小数"
             return ""
         if self.state.touch_input_kind == TOUCH_INPUT_INTENSITY:
-            if not value_text.isdigit():
-                return "PWM 光强只能输入整数"
-            percent = int(value_text)
-            if not 0 <= percent <= 100:
+            try:
+                percent = float(value_text)
+            except ValueError:
+                return "请输入有效 PWM 光强"
+            if (
+                not math.isfinite(percent)
+                or not PWM_INPUT_MIN_PERCENT <= percent <= PWM_INPUT_MAX_PERCENT
+            ):
                 return "PWM 光强范围必须为 0~100%"
+            if not self._percent_precision_ok(value_text):
+                return "PWM 光强最多保留两位小数"
             return ""
         return ""
 
@@ -261,7 +364,7 @@ class ExperimentController:
         value_text = self.state.touch_input_value
         if not value_text:
             self._set_touch_input_error(
-                "请输入 0~360° 的目标角度"
+                "请输入 0~369.99° 的目标角度"
                 if self.state.touch_input_kind == TOUCH_INPUT_ANGLE
                 else "请输入 0~100% 的 PWM 光强"
             )
@@ -352,15 +455,18 @@ class ExperimentController:
             f"({self.state.motor_target_deg:.2f}°)"
         )
 
-    def set_intensity(self, percent: int) -> None:
+    def set_intensity(self, percent: float) -> None:
         if not self.hardware.device_available("leds"):
             self.state.light_on = False
             self.state.status = "LED PWM 自检未通过，灯光功能不可用"
             return
-        self.state.intensity_percent = max(0, min(100, percent))
+        self.state.intensity_percent = round(
+            max(PWM_INPUT_MIN_PERCENT, min(PWM_INPUT_MAX_PERCENT, float(percent))),
+            2,
+        )
         self.hardware.light.set_intensity(self.state.intensity_percent)
         self.sync_light_output()
-        self.state.status = f"光强：{self.state.intensity_percent}%"
+        self.state.status = f"光强：{self._format_percent(self.state.intensity_percent)}%"
 
     def toggle_measurement(self) -> None:
         self.set_measurement(not self.state.measuring)
@@ -406,14 +512,14 @@ class ExperimentController:
             return
         self.state.motor_adjustment_active = True
         self._prepare_auto_camera()
-        if 0.0 <= self.state.motor_target_deg <= 360.0:
+        if ANGLE_INPUT_MIN_DEG <= self.state.motor_target_deg <= ANGLE_INPUT_MAX_DEG:
             self.state.motor_adjustment_input = self._format_angle(
                 self.state.motor_target_deg
             )
             self.state.motor_adjustment_error = ""
         else:
             self.state.motor_adjustment_input = ""
-            self.state.motor_adjustment_error = "请输入 0~360° 的目标角度"
+            self.state.motor_adjustment_error = "请输入 0~369.99° 的目标角度"
         self.state.motor_adjustment_replace_input = True
         self.state.status = f"手动调节：{self.state.lamp_name}"
 
@@ -459,8 +565,14 @@ class ExperimentController:
             angle_deg = float(value_text)
         except ValueError:
             return False
-        if not math.isfinite(angle_deg) or not 0.0 <= angle_deg <= 360.0:
-            self.state.motor_adjustment_error = "角度范围必须为 0~360°"
+        if (
+            not math.isfinite(angle_deg)
+            or not ANGLE_INPUT_MIN_DEG <= angle_deg <= ANGLE_INPUT_MAX_DEG
+        ):
+            self.state.motor_adjustment_error = "角度范围必须为 0~369.99°"
+            return False
+        if not self._angle_precision_ok(value_text):
+            self.state.motor_adjustment_error = "角度最多保留两位小数"
             return False
         self.state.motor_adjustment_input = value_text
         self.state.motor_adjustment_error = ""
@@ -472,19 +584,23 @@ class ExperimentController:
             return
         if self.state.motor_adjustment_error in {
             "输入值过长",
-            "角度范围必须为 0~360°",
+            "角度范围必须为 0~369.99°",
+            "角度最多保留两位小数",
         }:
             return
         if not self.state.motor_adjustment_input:
-            self.state.motor_adjustment_error = "请输入 0~360° 的目标角度"
+            self.state.motor_adjustment_error = "请输入 0~369.99° 的目标角度"
             return
         try:
             angle_deg = float(self.state.motor_adjustment_input)
         except ValueError:
             self.state.motor_adjustment_error = "请输入有效的目标角度"
             return
-        if not math.isfinite(angle_deg) or not 0.0 <= angle_deg <= 360.0:
-            self.state.motor_adjustment_error = "角度范围必须为 0~360°"
+        if (
+            not math.isfinite(angle_deg)
+            or not ANGLE_INPUT_MIN_DEG <= angle_deg <= ANGLE_INPUT_MAX_DEG
+        ):
+            self.state.motor_adjustment_error = "角度范围必须为 0~369.99°"
             return
         self._apply_manual_angle(angle_deg)
         self.state.motor_adjustment_replace_input = True
@@ -493,8 +609,8 @@ class ExperimentController:
         if not math.isfinite(target_angle_deg):
             self.state.motor_adjustment_error = "角度必须是有限数值"
             return
-        if not 0.0 <= target_angle_deg <= 360.0:
-            self.state.motor_adjustment_error = "角度范围必须为 0~360°"
+        if not ANGLE_INPUT_MIN_DEG <= target_angle_deg <= ANGLE_INPUT_MAX_DEG:
+            self.state.motor_adjustment_error = "角度范围必须为 0~369.99°"
             return
         offset_deg = (
             target_angle_deg
@@ -547,7 +663,23 @@ class ExperimentController:
 
     @staticmethod
     def _format_angle(angle_deg: float) -> str:
-        return f"{angle_deg:.3f}".rstrip("0").rstrip(".")
+        return f"{angle_deg:.2f}".rstrip("0").rstrip(".")
+
+    @staticmethod
+    def _format_percent(percent: float) -> str:
+        return f"{percent:.2f}".rstrip("0").rstrip(".")
+
+    @staticmethod
+    def _percent_precision_ok(value_text: str) -> bool:
+        if "." not in value_text:
+            return True
+        return len(value_text.split(".", 1)[1]) <= 2
+
+    @staticmethod
+    def _angle_precision_ok(value_text: str) -> bool:
+        if "." not in value_text:
+            return True
+        return len(value_text.split(".", 1)[1]) <= 2
 
     def clear_curve(self) -> None:
         self.state.clear_samples()

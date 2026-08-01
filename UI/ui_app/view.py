@@ -13,6 +13,7 @@ from .self_test import (
     SelfTestItem,
 )
 from .state import (
+    ANGLE_FINE_STEPS_DEG,
     CONTROL_ITEMS,
     LAMP_SHORT_NAMES,
     TOUCH_INPUT_ANGLE,
@@ -20,19 +21,23 @@ from .state import (
 )
 
 
-BG = (13, 17, 20)
-PANEL = (27, 33, 38)
-PANEL_ACTIVE = (35, 47, 51)
-PANEL_DARK = (18, 23, 27)
-TEXT = (239, 243, 245)
-MUTED = (157, 168, 175)
-ACCENT = (54, 184, 139)
-ACCENT_DARK = (26, 92, 74)
-WARN = (238, 174, 71)
-ERROR = (224, 91, 91)
-GRID = (59, 68, 74)
-CURVE = (100, 190, 235)
-FFT_CURVE = (238, 174, 71)
+BG = (46, 101, 171)
+PANEL = (214, 229, 250)
+PANEL_ACTIVE = (238, 246, 255)
+PANEL_DARK = (168, 197, 235)
+TEXT = (9, 32, 72)
+MUTED = (70, 91, 126)
+ACCENT = (33, 100, 197)
+ACCENT_DARK = (19, 66, 143)
+WARN = (237, 164, 46)
+ERROR = (178, 45, 44)
+GRID = (129, 163, 208)
+CURVE = (10, 68, 158)
+FFT_CURVE = (220, 132, 20)
+HILITE = (255, 255, 255)
+SHADOW = (54, 88, 142)
+BUTTON_TOP = (250, 253, 255)
+BUTTON_BOTTOM = (147, 186, 235)
 
 CONTROL_LABELS = {
     "lamp": "灯组转轮",
@@ -151,22 +156,24 @@ class MainView:
         self.touch_regions = []
         self.screen.fill(BG)
         width, height = self.screen.get_size()
-        margin = 16
-        header_h = 64
-        footer_h = 76
-        gap = 12
-        header = pygame.Rect(margin, 14, width - margin * 2, header_h)
-        footer = pygame.Rect(margin, height - footer_h - margin, width - margin * 2, footer_h)
+        margin = 10
+        header_h = 66
+        gap = 10
+        header = pygame.Rect(margin, 10, width - margin * 2, header_h)
         content_y = header.bottom + gap
-        content_h = footer.top - gap - content_y
-        left_w = 340
+        content_h = height - margin - content_y
+        left_w = 398
         controls = pygame.Rect(margin, content_y, left_w, content_h)
-        chart = pygame.Rect(controls.right + 14, content_y, width - controls.right - 30, content_h)
+        chart = pygame.Rect(
+            controls.right + gap,
+            content_y,
+            width - controls.right - gap - margin,
+            content_h,
+        )
 
         self._draw_header(header, state)
         self._draw_touch_controls(controls, state)
         self._draw_chart(chart, state)
-        self._draw_touch_toolbar(footer, state)
         if state.touch_input_active:
             self._draw_numeric_overlay(state)
         pygame.display.flip()
@@ -270,60 +277,247 @@ class MainView:
         pygame.display.flip()
 
     def _draw_header(self, rect: pygame.Rect, state: DeviceState) -> None:
-        pygame.draw.rect(self.screen, PANEL, rect, border_radius=6)
-        pygame.draw.rect(self.screen, ACCENT, (rect.x, rect.y, 6, rect.height), border_radius=3)
-        self._text("不同材料光电流测量", self.font_title, TEXT, rect.x + 22, rect.y + 13)
+        self._draw_beveled_panel(rect, active=True)
+        pygame.draw.rect(
+            self.screen,
+            ACCENT_DARK,
+            (rect.x + 4, rect.y + 4, 6, rect.height - 8),
+            border_radius=2,
+        )
+        self._text("光电流激发与测量系统", self.font_title, TEXT, rect.x + 20, rect.y + 8)
 
         status_color = ACCENT if state.measuring else WARN
-        pygame.draw.circle(self.screen, status_color, (rect.right - 346, rect.centery), 6)
+        pygame.draw.circle(self.screen, status_color, (rect.x + 29, rect.bottom - 17), 5)
         self._text(
             state.status,
-            self.font_body,
-            TEXT,
-            rect.right - 330,
-            rect.y + 20,
-            max_width=180,
-        )
-
-        self._text("最近输入", self.font_small, MUTED, rect.right - 150, rect.y + 23)
-        key_rect = pygame.Rect(rect.right - 66, rect.y + 14, 46, 38)
-        pygame.draw.rect(self.screen, PANEL_DARK, key_rect, border_radius=5)
-        pygame.draw.rect(self.screen, ACCENT_DARK, key_rect, width=2, border_radius=5)
-        self._center_text(state.last_key or "-", self.font_key, TEXT, key_rect)
-
-    def _draw_touch_controls(self, rect: pygame.Rect, state: DeviceState) -> None:
-        pygame.draw.rect(self.screen, PANEL, rect, border_radius=6)
-        self._text("触控控制", self.font_heading, TEXT, rect.x + 16, rect.y + 12)
-        self._text(
-            "点选灯位 · 点数值输入",
             self.font_small,
             MUTED,
-            rect.right - 170,
-            rect.y + 18,
-            max_width=154,
+            rect.x + 40,
+            rect.bottom - 27,
+            max_width=510,
         )
 
-        gap = 8
-        lamp_h = 180
-        intensity_h = 96
-        camera_h = rect.height - 44 - lamp_h - intensity_h - gap * 2
-        lamp_rect = pygame.Rect(rect.x + 12, rect.y + 44, rect.width - 24, lamp_h)
-        intensity_rect = pygame.Rect(
-            rect.x + 12,
-            lamp_rect.bottom + gap,
-            rect.width - 24,
-            intensity_h,
+        button_gap = 8
+        button_w = 124
+        clear_rect = pygame.Rect(rect.right - button_w - 8, rect.y + 7, button_w, rect.height - 14)
+        measure_rect = pygame.Rect(clear_rect.x - button_gap - button_w, clear_rect.y, button_w, clear_rect.height)
+        self._draw_touch_button(
+            measure_rect,
+            "暂停测量" if state.measuring else "开始测量",
+            "MEASURE",
+            active=state.measuring,
+            accent=ACCENT,
         )
+        self._draw_touch_button(
+            clear_rect,
+            "清空曲线",
+            f"{len(state.samples)} 点",
+            danger=True,
+            accent=ERROR,
+        )
+        self._add_touch_region("toggle_measurement", measure_rect)
+        self._add_touch_region("clear_curve", clear_rect)
+
+    def _draw_touch_controls(self, rect: pygame.Rect, state: DeviceState) -> None:
+        if state.motor_adjustment_active:
+            self._draw_angle_touch_page(rect, state)
+            return
+
+        self._draw_beveled_panel(rect)
+        gap = 10
+        inner = rect.inflate(-14, -14)
+        card_h = (inner.height - gap * 2) // 3
+        lamp_rect = pygame.Rect(inner.x, inner.y, inner.width, card_h)
+        pwm_rect = pygame.Rect(inner.x, lamp_rect.bottom + gap, inner.width, card_h)
         camera_rect = pygame.Rect(
-            rect.x + 12,
-            intensity_rect.bottom + gap,
-            rect.width - 24,
-            max(70, camera_h),
+            inner.x,
+            pwm_rect.bottom + gap,
+            inner.width,
+            inner.bottom - pwm_rect.bottom - gap,
         )
 
-        self._draw_lamp_touch_card(lamp_rect, state)
-        self._draw_intensity_touch_card(intensity_rect, state)
-        self._draw_camera_touch_card(camera_rect, state)
+        self._draw_lamp_selector_card(lamp_rect, state)
+        self._draw_pwm_selector_card(pwm_rect, state)
+        self._draw_camera_selector_card(camera_rect, state)
+
+    def _draw_lamp_selector_card(self, rect: pygame.Rect, state: DeviceState) -> None:
+        subtitle = "转动中" if state.motor_moving else "已到位" if state.motor_ready else "待定位"
+        center_title = LAMP_SHORT_NAMES[state.lamp_index]
+        center_subtitle = f"{state.motor_target_deg:.2f}°"
+        self._draw_three_part_selector(
+            rect,
+            title="灯位转盘",
+            subtitle=subtitle,
+            left_label="◀",
+            left_subtitle=LAMP_SHORT_NAMES[(state.lamp_index - 1) % len(LAMP_SHORT_NAMES)],
+            center_label=center_title,
+            center_subtitle=center_subtitle,
+            right_label="▶",
+            right_subtitle=LAMP_SHORT_NAMES[(state.lamp_index + 1) % len(LAMP_SHORT_NAMES)],
+            left_action="lamp_previous",
+            center_action="open_angle_page",
+            right_action="lamp_next",
+            state=state,
+            center_active=True,
+        )
+
+    def _draw_pwm_selector_card(self, rect: pygame.Rect, state: DeviceState) -> None:
+        step_text = f"步进 {self._format_percent(state.pwm_step_percent)}%"
+        self._draw_three_part_selector(
+            rect,
+            title="PWM 调光",
+            subtitle="灯亮" if state.light_on else "灯灭",
+            left_label="－",
+            left_subtitle=step_text,
+            center_label=f"{self._format_percent(state.intensity_percent)}%",
+            center_subtitle="",
+            right_label="＋",
+            right_subtitle=step_text,
+            left_action="pwm_down",
+            center_action="open_intensity_input",
+            right_action="pwm_up",
+            state=state,
+            center_active=True,
+            accent=WARN,
+        )
+        step_rect = pygame.Rect(rect.right - 98, rect.y + 8, 88, 30)
+        self._draw_touch_button(step_rect, "步进", self._format_percent(state.pwm_step_percent) + "%")
+        self._add_touch_region("cycle_pwm_step", step_rect)
+
+    def _draw_camera_selector_card(self, rect: pygame.Rect, state: DeviceState) -> None:
+        if not state.camera_enabled:
+            mode_label = "关闭"
+        else:
+            mode_label = state.camera_view_name
+        if state.camera_ready:
+            subtitle = "已连接"
+        elif state.camera_error:
+            subtitle = "异常"
+        elif state.camera_enabled:
+            subtitle = "连接中"
+        else:
+            subtitle = "待机"
+        self._draw_three_part_selector(
+            rect,
+            title="摄像画面",
+            subtitle=subtitle,
+            left_label="◀",
+            left_subtitle="模式",
+            center_label=mode_label,
+            center_subtitle="",
+            right_label="▶",
+            right_subtitle="模式",
+            left_action="camera_previous_mode",
+            center_action="toggle_camera",
+            right_action="camera_next_mode",
+            state=state,
+            center_active=state.camera_enabled,
+        )
+
+    def _draw_three_part_selector(
+        self,
+        rect: pygame.Rect,
+        *,
+        title: str,
+        subtitle: str,
+        left_label: str,
+        left_subtitle: str,
+        center_label: str,
+        center_subtitle: str,
+        right_label: str,
+        right_subtitle: str,
+        left_action: str,
+        center_action: str,
+        right_action: str,
+        state: DeviceState,
+        center_active: bool = False,
+        accent: tuple[int, int, int] = ACCENT,
+    ) -> None:
+        del state
+        self._draw_beveled_panel(rect)
+        self._text(title, self.font_body, TEXT, rect.x + 12, rect.y + 9)
+        self._text(subtitle, self.font_small, MUTED, rect.x + 12, rect.y + 34, max_width=120)
+        button_y = rect.y + 44
+        button_h = rect.bottom - button_y - 10
+        side_w = 74
+        gap = 8
+        left_rect = pygame.Rect(rect.x + 12, button_y, side_w, button_h)
+        right_rect = pygame.Rect(rect.right - 12 - side_w, button_y, side_w, button_h)
+        center_rect = pygame.Rect(
+            left_rect.right + gap,
+            button_y,
+            right_rect.x - left_rect.right - gap * 2,
+            button_h,
+        )
+        self._draw_touch_button(left_rect, left_label, left_subtitle, accent=accent)
+        self._draw_touch_button(
+            center_rect,
+            center_label,
+            center_subtitle,
+            active=center_active,
+            accent=accent,
+        )
+        self._draw_touch_button(right_rect, right_label, right_subtitle, accent=accent)
+        self._add_touch_region(left_action, left_rect)
+        self._add_touch_region(center_action, center_rect)
+        self._add_touch_region(right_action, right_rect)
+
+    def _draw_angle_touch_page(self, rect: pygame.Rect, state: DeviceState) -> None:
+        self._draw_beveled_panel(rect)
+        inner = rect.inflate(-14, -14)
+        self._text("转盘角度控制", self.font_heading, TEXT, inner.x + 6, inner.y + 5)
+        self._text(
+            f"{LAMP_SHORT_NAMES[state.lamp_index]}  目标 {state.motor_target_deg:.2f}°",
+            self.font_body,
+            ACCENT_DARK,
+            inner.x + 6,
+            inner.y + 40,
+            max_width=inner.width - 12,
+        )
+        position_text = "电机转动中" if state.motor_moving else f"当前 {state.motor_position_deg:.2f}°"
+        self._text(
+            state.motor_adjustment_error or position_text,
+            self.font_small,
+            WARN if state.motor_adjustment_error or state.motor_moving else MUTED,
+            inner.x + 6,
+            inner.y + 68,
+            max_width=inner.width - 12,
+        )
+
+        row_top = inner.y + 102
+        row_gap = 12
+        row_h = 66
+        for index, step in enumerate(ANGLE_FINE_STEPS_DEG):
+            row = pygame.Rect(inner.x + 6, row_top + index * (row_h + row_gap), inner.width - 12, row_h)
+            minus_rect = pygame.Rect(row.x, row.y, 96, row.height)
+            plus_rect = pygame.Rect(row.right - 96, row.y, 96, row.height)
+            label_rect = pygame.Rect(minus_rect.right + 10, row.y, plus_rect.x - minus_rect.right - 20, row.height)
+            disabled = state.motor_moving
+            self._draw_touch_button(minus_rect, f"－{step:g}°", "", disabled=disabled, accent=WARN)
+            self._draw_touch_button(label_rect, f"{step:g}°", "微调步进", active=True, accent=ACCENT)
+            self._draw_touch_button(plus_rect, f"＋{step:g}°", "", disabled=disabled, accent=WARN)
+            if not disabled:
+                self._add_touch_region("angle_delta", minus_rect, -step)
+                self._add_touch_region("angle_delta", plus_rect, step)
+
+        bottom_h = 58
+        gap = 8
+        manual_rect = pygame.Rect(inner.x + 6, inner.bottom - bottom_h, 126, bottom_h)
+        save_rect = pygame.Rect(manual_rect.right + gap, manual_rect.y, 116, bottom_h)
+        back_rect = pygame.Rect(save_rect.right + gap, manual_rect.y, inner.right - save_rect.right - gap - 6, bottom_h)
+        self._draw_touch_button(manual_rect, "手动输入", "矩阵键盘", active=True, accent=ACCENT)
+        self._draw_touch_button(
+            save_rect,
+            "保存偏移",
+            "写入配置",
+            disabled=state.motor_moving,
+            accent=ACCENT,
+        )
+        self._draw_touch_button(back_rect, "返回", "主控制", accent=WARN)
+        self._add_touch_region("open_angle_input", manual_rect)
+        if not state.motor_moving:
+            self._add_touch_region("save_angle_offset", save_rect)
+        self._add_touch_region("close_angle_adjustment", back_rect)
 
     def _draw_lamp_touch_card(self, rect: pygame.Rect, state: DeviceState) -> None:
         pygame.draw.rect(self.screen, PANEL_DARK, rect, border_radius=6)
@@ -561,18 +755,17 @@ class MainView:
         self.screen.blit(scrim, (0, 0))
 
         panel = pygame.Rect((width - 620) // 2, 62, 620, height - 94)
-        pygame.draw.rect(self.screen, PANEL, panel, border_radius=9)
-        pygame.draw.rect(self.screen, ACCENT, panel, width=2, border_radius=9)
+        self._draw_beveled_panel(panel, active=True)
 
         is_angle = state.touch_input_kind == TOUCH_INPUT_ANGLE
         title = "转盘角度输入" if is_angle else "PWM 光强输入"
-        range_text = "范围 0~360°，A/确认后开始转动" if is_angle else "范围 0~100%，整数百分比"
+        range_text = "范围 0~369.99°" if is_angle else "范围 0~100%，最多两位小数"
         value_suffix = "°" if is_angle else "%"
         self._text(title, self.font_title, TEXT, panel.x + 24, panel.y + 18)
         self._text(range_text, self.font_body, MUTED, panel.x + 24, panel.y + 58)
 
         value_rect = pygame.Rect(panel.x + 24, panel.y + 88, panel.width - 48, 62)
-        pygame.draw.rect(self.screen, PANEL_DARK, value_rect, border_radius=6)
+        self._fill_vertical_gradient(value_rect, (255, 255, 255), (221, 235, 253))
         pygame.draw.rect(self.screen, WARN if state.touch_input_error else ACCENT, value_rect, width=2, border_radius=6)
         value_text = state.touch_input_value or "--"
         self._center_text(f"{value_text}{value_suffix}", self.font_title, TEXT, value_rect)
@@ -595,7 +788,7 @@ class MainView:
             ("1", "2", "3"),
             ("4", "5", "6"),
             ("7", "8", "9"),
-            ("." if is_angle else "", "0", "⌫"),
+            (".", "0", "⌫"),
         )
         for row, row_keys in enumerate(keys):
             for column, key in enumerate(row_keys):
@@ -627,12 +820,12 @@ class MainView:
         self._add_touch_region("numeric_clear", clear_rect)
         self._add_touch_region("numeric_cancel", cancel_rect)
 
-        hint = "物理矩阵键盘现在只在这个数字输入界面生效"
-        self._center_text(
-            hint,
-            self.font_small,
-            MUTED,
-            pygame.Rect(panel.x + 24, panel.bottom - 34, panel.width - 48, 22),
+        pygame.draw.line(
+            self.screen,
+            GRID,
+            (panel.x + 24, panel.bottom - 34),
+            (panel.right - 24, panel.bottom - 34),
+            1,
         )
 
     def _draw_touch_button(
@@ -646,15 +839,24 @@ class MainView:
         danger: bool = False,
         disabled: bool = False,
     ) -> None:
-        fill = PANEL_ACTIVE if active else PANEL
-        border = ERROR if danger else accent if active else GRID
+        top = BUTTON_TOP if not active else (255, 255, 255)
+        bottom = BUTTON_BOTTOM if not active else (118, 171, 234)
+        border = ERROR if danger else accent if active else ACCENT_DARK
         if disabled:
-            fill = PANEL_DARK
+            top = (207, 217, 229)
+            bottom = (159, 174, 196)
             border = GRID
-        pygame.draw.rect(self.screen, fill, rect, border_radius=6)
-        pygame.draw.rect(self.screen, border, rect, width=2 if active or danger else 1, border_radius=6)
+        if danger:
+            top = (255, 232, 232)
+            bottom = (222, 118, 118)
+        self._fill_vertical_gradient(rect, top, bottom)
+        pygame.draw.rect(self.screen, border, rect, width=2 if active or danger else 1, border_radius=5)
+        pygame.draw.line(self.screen, HILITE, (rect.x + 2, rect.y + 2), (rect.right - 3, rect.y + 2))
+        pygame.draw.line(self.screen, HILITE, (rect.x + 2, rect.y + 2), (rect.x + 2, rect.bottom - 3))
+        pygame.draw.line(self.screen, SHADOW, (rect.x + 2, rect.bottom - 2), (rect.right - 3, rect.bottom - 2))
+        pygame.draw.line(self.screen, SHADOW, (rect.right - 2, rect.y + 2), (rect.right - 2, rect.bottom - 3))
         label_color = MUTED if disabled else TEXT
-        sub_color = MUTED if disabled else accent if active else MUTED
+        sub_color = MUTED if disabled else ACCENT_DARK if active else MUTED
         if subtext:
             self._center_text(
                 label,
@@ -675,6 +877,42 @@ class MainView:
                 label_color,
                 rect,
             )
+
+    def _draw_beveled_panel(self, rect: pygame.Rect, active: bool = False) -> None:
+        top = (236, 246, 255) if active else (224, 238, 255)
+        bottom = (171, 203, 240) if active else (194, 216, 244)
+        self._fill_vertical_gradient(rect, top, bottom)
+        pygame.draw.rect(self.screen, SHADOW, rect, width=1, border_radius=5)
+        pygame.draw.line(self.screen, HILITE, (rect.x + 2, rect.y + 2), (rect.right - 3, rect.y + 2))
+        pygame.draw.line(self.screen, HILITE, (rect.x + 2, rect.y + 2), (rect.x + 2, rect.bottom - 3))
+        pygame.draw.line(self.screen, (93, 130, 184), (rect.x + 2, rect.bottom - 2), (rect.right - 3, rect.bottom - 2))
+        pygame.draw.line(self.screen, (93, 130, 184), (rect.right - 2, rect.y + 2), (rect.right - 2, rect.bottom - 3))
+
+    def _fill_vertical_gradient(
+        self,
+        rect: pygame.Rect,
+        top_color: tuple[int, int, int],
+        bottom_color: tuple[int, int, int],
+    ) -> None:
+        if rect.width <= 0 or rect.height <= 0:
+            return
+        height = max(1, rect.height - 1)
+        for offset in range(rect.height):
+            ratio = offset / height
+            color = tuple(
+                round(top_color[index] + (bottom_color[index] - top_color[index]) * ratio)
+                for index in range(3)
+            )
+            pygame.draw.line(
+                self.screen,
+                color,
+                (rect.x, rect.y + offset),
+                (rect.right - 1, rect.y + offset),
+            )
+
+    @staticmethod
+    def _format_percent(percent: float) -> str:
+        return f"{percent:.2f}".rstrip("0").rstrip(".")
 
     def _draw_controls(self, rect: pygame.Rect, state: DeviceState) -> None:
         pygame.draw.rect(self.screen, PANEL, rect, border_radius=6)
@@ -1029,44 +1267,20 @@ class MainView:
             self._draw_camera(rect, state)
             return
 
-        pygame.draw.rect(self.screen, PANEL, rect, border_radius=6)
-        self._text("光电流实时曲线（IN0）", self.font_heading, TEXT, rect.x + 16, rect.y + 13)
+        self._draw_beveled_panel(rect)
+        self._text("光电流曲线", self.font_heading, TEXT, rect.x + 16, rect.y + 13)
         latest = state.samples[-1].voltage_mv if state.samples else 0.0
         value_surface = self.font_value.render(f"{latest:0.3f} mV", True, ACCENT)
         self.screen.blit(value_surface, (rect.right - value_surface.get_width() - 18, rect.y + 10))
 
-        samples = state.samples[-240:]
-        if state.fft_visible:
-            time_plot = pygame.Rect(rect.x + 20, rect.y + 61, rect.width - 40, 112)
-            self._draw_time_plot(
-                time_plot,
-                samples,
-                state.measuring,
-                label="时域",
-            )
-            fft_result = analyze_fft(
-                [sample.timestamp_s for sample in state.samples],
-                [sample.voltage_mv for sample in state.samples],
-            )
-            info_y = time_plot.bottom + 21
-            if fft_result is None:
-                self._text("FFT：等待至少16个有效采样点", self.font_small, WARN, rect.x + 20, info_y)
-            else:
-                self._text(
-                    f"FFT主频：{fft_result.center_frequency_hz:.3f} Hz  "
-                    f"范围：{fft_result.range_min_hz:.3f}-{fft_result.range_max_hz:.3f} Hz  "
-                    f"时长：{fft_result.duration_s:.1f} s",
-                    self.font_small,
-                    WARN,
-                    rect.x + 20,
-                    info_y,
-                    max_width=rect.width - 40,
-                )
-            fft_plot = pygame.Rect(rect.x + 20, rect.y + 222, rect.width - 40, 130)
-            self._draw_fft_plot(fft_plot, fft_result)
-        else:
-            plot = pygame.Rect(rect.x + 20, rect.y + 60, rect.width - 40, rect.height - 122)
-            self._draw_time_plot(plot, samples, state.measuring)
+        samples = self._select_chart_samples(state)
+        plot = pygame.Rect(rect.x + 20, rect.y + 60, rect.width - 40, rect.height - 112)
+        self._draw_time_plot(
+            plot,
+            samples,
+            state.measuring,
+            voltage_zoom=state.plot_voltage_zoom,
+        )
 
         elapsed = samples[-1].timestamp_s if samples else 0.0
         self._text(
@@ -1081,6 +1295,13 @@ class MainView:
 
         if state.camera_visible and state.camera_view_mode == "small":
             self._draw_camera_thumbnail(rect, state)
+
+    def _select_chart_samples(self, state: DeviceState) -> list:
+        if not state.samples:
+            return []
+        target_count = round(360 / max(0.35, state.plot_time_zoom))
+        target_count = max(30, min(600, target_count))
+        return state.samples[-target_count:]
 
     def _draw_camera(self, rect: pygame.Rect, state: DeviceState) -> None:
         pygame.draw.rect(self.screen, PANEL, rect, border_radius=6)
@@ -1214,7 +1435,8 @@ class MainView:
             )
 
     def _draw_plot_grid(self, plot: pygame.Rect) -> None:
-        pygame.draw.rect(self.screen, PANEL_DARK, plot, border_radius=4)
+        self._fill_vertical_gradient(plot, (255, 255, 255), (228, 239, 253))
+        pygame.draw.rect(self.screen, ACCENT_DARK, plot, width=1, border_radius=4)
         for index in range(1, 5):
             y = plot.y + index * plot.height // 5
             pygame.draw.line(self.screen, GRID, (plot.x, y), (plot.right, y), 1)
@@ -1228,6 +1450,7 @@ class MainView:
         samples: list,
         measuring: bool,
         label: str = "",
+        voltage_zoom: float = 1.0,
     ) -> None:
         self._draw_plot_grid(plot)
         if label:
@@ -1237,9 +1460,11 @@ class MainView:
             min_v = min(values)
             max_v = max(values)
             span = max(max_v - min_v, 1.0)
-            lower = min_v - span * 0.08
-            upper = max_v + span * 0.08
-            scale = upper - lower
+            center_v = (min_v + max_v) / 2.0
+            visible_span = max(1.0, span * 1.16 / max(0.35, voltage_zoom))
+            lower = center_v - visible_span / 2.0
+            upper = center_v + visible_span / 2.0
+            scale = max(upper - lower, 1e-9)
             start_time = samples[0].timestamp_s
             end_time = samples[-1].timestamp_s
             time_span = max(end_time - start_time, 0.001)
@@ -1247,13 +1472,14 @@ class MainView:
             for sample in samples:
                 x = plot.x + int((sample.timestamp_s - start_time) * (plot.width - 1) / time_span)
                 y = plot.bottom - 1 - int((sample.voltage_mv - lower) * (plot.height - 2) / scale)
+                y = max(plot.y + 1, min(plot.bottom - 2, y))
                 points.append((x, y))
             pygame.draw.lines(self.screen, CURVE, False, points, 2)
             self._plot_label(f"{upper:0.1f}", plot.x + 7, plot.y + 6)
             self._plot_label(f"{lower:0.1f}", plot.x + 7, plot.bottom - 23)
             self._draw_x_axis_labels(plot, start_time, end_time, "s")
         else:
-            message = "等待首个采样点" if measuring else "按 # 开始测量"
+            message = "等待首个采样点" if measuring else "测量已暂停"
             surface = self.font_heading.render(message, True, MUTED)
             self.screen.blit(surface, surface.get_rect(center=plot.center))
 

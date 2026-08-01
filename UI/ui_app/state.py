@@ -9,6 +9,12 @@ CAMERA_VIEW_MODES = ("small", "full")
 TOUCH_INPUT_NONE = ""
 TOUCH_INPUT_ANGLE = "angle"
 TOUCH_INPUT_INTENSITY = "intensity"
+ANGLE_INPUT_MIN_DEG = 0.0
+ANGLE_INPUT_MAX_DEG = 369.99
+PWM_INPUT_MIN_PERCENT = 0.0
+PWM_INPUT_MAX_PERCENT = 100.0
+ANGLE_FINE_STEPS_DEG = (0.1, 0.5, 5.0)
+PWM_STEP_OPTIONS_PERCENT = (0.1, 1.0, 5.0)
 LAMP_NAMES = (
     "400nm紫外光",
     "450nm蓝光",
@@ -52,7 +58,8 @@ class DeviceState:
     lamp_arrow_focus: int = 0
     lamp_index: int = 0
     active_lamp_index: int = 0
-    intensity_percent: int = 100
+    intensity_percent: float = 100.0
+    pwm_step_index: int = 1
     measuring: bool = True
     light_on: bool = False
     camera_enabled: bool = True
@@ -81,6 +88,8 @@ class DeviceState:
     touch_input_value: str = ""
     touch_input_replace_input: bool = True
     touch_input_error: str = ""
+    plot_time_zoom: float = 1.0
+    plot_voltage_zoom: float = 1.0
     samples: list[SamplePoint] = field(default_factory=list)
     started_at_s: float = field(default_factory=monotonic)
 
@@ -116,6 +125,12 @@ class DeviceState:
     @property
     def touch_input_active(self) -> bool:
         return self.touch_input_kind != TOUCH_INPUT_NONE
+
+    @property
+    def pwm_step_percent(self) -> float:
+        return PWM_STEP_OPTIONS_PERCENT[
+            self.pwm_step_index % len(PWM_STEP_OPTIONS_PERCENT)
+        ]
 
     def clear_samples(self) -> None:
         self.samples.clear()

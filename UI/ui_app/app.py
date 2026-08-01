@@ -25,7 +25,7 @@ from .workers import (
 
 
 KEY_TO_BUTTON = {
-    pygame.K_1: (Button.TOGGLE_FFT, "1"),
+    pygame.K_1: (Button.TEXT_INPUT, "1"),
     pygame.K_2: (Button.SELECT_PREVIOUS, "2"),
     pygame.K_8: (Button.SELECT_NEXT, "8"),
     pygame.K_4: (Button.DECREASE, "4"),
@@ -80,10 +80,27 @@ def _touch_position_from_event(
 ) -> tuple[int, int] | None:
     if event.type == pygame.MOUSEBUTTONUP and getattr(event, "button", 0) == 1:
         return int(event.pos[0]), int(event.pos[1])
-    if event.type == pygame.FINGERUP:
-        width, height = screen.get_size()
-        return int(event.x * width), int(event.y * height)
     return None
+
+
+def _finger_position_from_event(
+    event: pygame.event.Event,
+    screen: pygame.Surface,
+) -> tuple[int, int]:
+    width, height = screen.get_size()
+    return int(event.x * width), int(event.y * height)
+
+
+def _finger_vector(
+    active_fingers: dict[int, tuple[int, int]],
+) -> tuple[float, float] | None:
+    if len(active_fingers) < 2:
+        return None
+    positions = list(active_fingers.values())[:2]
+    return (
+        float(positions[1][0] - positions[0][0]),
+        float(positions[1][1] - positions[0][1]),
+    )
 
 
 def _is_duplicate_touch(
@@ -128,18 +145,26 @@ def _dispatch_touch_action(
     elif action == "numeric_cancel":
         state.last_key = "取消"
         controller.cancel_numeric_input()
-    elif action == "select_lamp":
-        controller.select_lamp(int(region.value))
+    elif action == "lamp_previous":
+        controller.select_previous_lamp()
+    elif action == "lamp_next":
+        controller.select_next_lamp()
+    elif action == "open_angle_page":
+        controller.enter_motor_adjustment()
     elif action == "open_angle_input":
         controller.begin_angle_input()
+    elif action == "angle_delta":
+        controller.adjust_motor_angle_delta(float(region.value))
     elif action == "save_angle_offset":
         controller.save_angle_adjustment()
     elif action == "close_angle_adjustment":
         controller.close_angle_adjustment()
-    elif action == "intensity_down":
-        controller.set_intensity(state.intensity_percent - 5)
-    elif action == "intensity_up":
-        controller.set_intensity(state.intensity_percent + 5)
+    elif action == "pwm_down":
+        controller.adjust_intensity_by_step(-1)
+    elif action == "pwm_up":
+        controller.adjust_intensity_by_step(1)
+    elif action == "cycle_pwm_step":
+        controller.cycle_pwm_step()
     elif action == "open_intensity_input":
         controller.begin_intensity_input()
     elif action == "intensity_slider":
@@ -149,17 +174,12 @@ def _dispatch_touch_action(
         controller.toggle_measurement()
     elif action == "clear_curve":
         controller.clear_curve()
-    elif action == "toggle_fft":
-        state.fft_visible = not state.fft_visible
-        state.status = "FFT分析已开启" if state.fft_visible else "FFT分析已关闭"
     elif action == "toggle_camera":
         controller.toggle_camera()
-    elif action == "toggle_camera_view":
-        controller.toggle_camera_view_mode()
-    elif action == "camera_view_small":
-        controller.set_camera_view_mode("small")
-    elif action == "camera_view_full":
-        controller.set_camera_view_mode("full")
+    elif action == "camera_previous_mode":
+        controller.select_previous_camera_mode()
+    elif action == "camera_next_mode":
+        controller.select_next_camera_mode()
 
 
 def run_app(config: AppConfig) -> int:
@@ -353,17 +373,62 @@ def run_app(config: AppConfig) -> int:
         running = True
         last_touch_at_s = 0.0
         last_touch_position = (-10000, -10000)
+        active_fingers: dict[int, tuple[int, int]] = {}
+        suppressed_finger_ids: set[int] = set()
+        last_gesture_vector: tuple[float, float] | None = None
+        recent_gesture_at_s = 0.0
         while running:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     running = False
-                elif (
-                    touch_position := _touch_position_from_event(event, screen)
-                ) is not None:
-                    if not _is_duplicate_touch(
+                elif event.type == pygame.FINGERDOWN:
+                    finger_id = int(event.finger_id)
+                    active_fingers[finger_id] = _finger_position_from_event(event, screen)
+                    if len(active_fingers) >= 2 and not state.touch_input_active:
+                        suppressed_finger_ids.update(active_fingers)
+                        last_gesture_vector = _finger_vector(active_fingers)
+                elif event.type == pygame.FINGERMOTION:
+                    finger_id = int(event.finger_id)
+                    active_fingers[finger_id] = _finger_position_from_event(event, screen)
+                    if len(active_fingers) >= 2 and not state.touch_input_active:
+                        current_vector = _finger_vector(active_fingers)
+                        if (
+                            current_vector is not None
+                            and last_gesture_vector is not None
+                        ):
+                            controller.apply_plot_pinch(
+                                last_gesture_vector,
+                                current_vector,
+                            )
+                            recent_gesture_at_s = time.monotonic()
+                        last_gesture_vector = current_vector
+                        suppressed_finger_ids.update(active_fingers)
+                elif event.type == pygame.FINGERUP:
+                    finger_id = int(event.finger_id)
+                    touch_position = _finger_position_from_event(event, screen)
+                    was_suppressed = finger_id in suppressed_finger_ids
+                    active_fingers.pop(finger_id, None)
+                    suppressed_finger_ids.discard(finger_id)
+                    if len(active_fingers) < 2:
+                        last_gesture_vector = None
+                    if not was_suppressed and not _is_duplicate_touch(
                         touch_position,
                         last_touch_position,
                         last_touch_at_s,
+                    ):
+                        _dispatch_touch_action(view, controller, touch_position)
+                        last_touch_position = touch_position
+                        last_touch_at_s = time.monotonic()
+                elif (
+                    touch_position := _touch_position_from_event(event, screen)
+                ) is not None:
+                    if (
+                        time.monotonic() - recent_gesture_at_s > 0.2
+                        and not _is_duplicate_touch(
+                        touch_position,
+                        last_touch_position,
+                        last_touch_at_s,
+                        )
                     ):
                         _dispatch_touch_action(view, controller, touch_position)
                         last_touch_position = touch_position
@@ -404,7 +469,7 @@ def run_app(config: AppConfig) -> int:
                     else:
                         state.last_button = "KEYPAD_IDLE"
                         state.last_key = message.event.key
-                        state.status = "请使用触摸屏操作；键盘仅在数字输入时生效"
+                        state.status = "当前界面不接收矩阵键盘控制"
                 elif message.kind == "conflict" and message.reading is not None:
                     state.last_button = "CONFLICT"
                     state.last_key = "多键"

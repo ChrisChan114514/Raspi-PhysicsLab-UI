@@ -32,7 +32,7 @@ MATRIX_KEY_TO_BUTTON = {
     "D": Button.CLEAR_CURVE,
     "5": Button.TOGGLE_CAMERA,
     "#": Button.TOGGLE_MEASUREMENT,
-    "1": Button.TOGGLE_FFT,
+    "1": Button.TEXT_INPUT,
     "*": Button.TEXT_INPUT,
 }
 
@@ -300,7 +300,7 @@ class LightController:
     def set_enabled(self, enabled: bool) -> None:
         raise NotImplementedError
 
-    def set_intensity(self, percent: int) -> None:
+    def set_intensity(self, percent: float) -> None:
         raise NotImplementedError
 
     def close(self) -> None:
@@ -326,7 +326,7 @@ class SimulatedLightController(LightController):
     def set_enabled(self, enabled: bool) -> None:
         self._enabled = bool(enabled)
 
-    def set_intensity(self, percent: int) -> None:
+    def set_intensity(self, percent: float) -> None:
         self.intensity_percent = max(0, min(100, percent))
 
     def close(self) -> None:
@@ -339,7 +339,7 @@ class RaspberryPiPwmLightController(LightController):
         led_dir: Path,
         frequency_hz: float = 1000.0,
         active_high: bool = True,
-        initial_intensity_percent: int = 100,
+        initial_intensity_percent: float = 100.0,
         debug: bool = False,
     ) -> None:
         driver_path = led_dir / "led_pwm.py"
@@ -410,7 +410,7 @@ class RaspberryPiPwmLightController(LightController):
         for lamp_index, led in self._leds.items():
             led.set_enabled(bool(enabled) and lamp_index == self._active_lamp_index)
 
-    def set_intensity(self, percent: int) -> None:
+    def set_intensity(self, percent: float) -> None:
         self.intensity_percent = max(0, min(100, percent))
         for led in self._leds.values():
             led.set_duty_cycle(self.intensity_percent)
@@ -529,7 +529,7 @@ class VoltageReading:
 
 class PhotocurrentSensor(ABC):
     @abstractmethod
-    def read(self, lamp_index: int, intensity_percent: int) -> VoltageReading:
+    def read(self, lamp_index: int, intensity_percent: float) -> VoltageReading:
         raise NotImplementedError
 
     def close(self) -> None:
@@ -537,7 +537,7 @@ class PhotocurrentSensor(ABC):
 
 
 class SimulatedPhotocurrentSensor(PhotocurrentSensor):
-    def read(self, lamp_index: int, intensity_percent: int) -> VoltageReading:
+    def read(self, lamp_index: int, intensity_percent: float) -> VoltageReading:
         base = (lamp_index + 1) * 4.0 + intensity_percent * 0.22
         wave = math.sin(time.monotonic() * 1.4) * 1.5
         noise = random.uniform(-0.35, 0.35)
@@ -626,7 +626,7 @@ class ADS1256PhotocurrentSensor(PhotocurrentSensor):
     def configuration_warning(self) -> str:
         return self._configuration_warning
 
-    def read(self, lamp_index: int, intensity_percent: int) -> VoltageReading:
+    def read(self, lamp_index: int, intensity_percent: float) -> VoltageReading:
         try:
             stats = self._read_stats()
         except (self._protocol_error, TimeoutError) as exc:
@@ -685,7 +685,7 @@ class UnavailableLightController(LightController):
     def set_enabled(self, enabled: bool) -> None:
         del enabled
 
-    def set_intensity(self, percent: int) -> None:
+    def set_intensity(self, percent: float) -> None:
         del percent
 
 
@@ -701,7 +701,7 @@ class UnavailablePhotocurrentSensor(PhotocurrentSensor):
     def __init__(self, reason: str) -> None:
         self.reason = reason
 
-    def read(self, lamp_index: int, intensity_percent: int) -> VoltageReading:
+    def read(self, lamp_index: int, intensity_percent: float) -> VoltageReading:
         del lamp_index, intensity_percent
         raise RuntimeError(f"ADS1256 不可用：{self.reason}")
 
