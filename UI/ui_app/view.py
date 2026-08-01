@@ -358,7 +358,7 @@ class MainView:
         )
 
     def _draw_pwm_selector_card(self, rect: pygame.Rect, state: DeviceState) -> None:
-        step_text = f"步进 {self._format_percent(state.pwm_step_percent)}%"
+        step_text = f"{self._format_percent(state.pwm_step_percent)}%"
         self._draw_three_part_selector(
             rect,
             title="PWM 调光",
@@ -393,8 +393,13 @@ class MainView:
             subtitle = "连接中"
         else:
             subtitle = "待机"
+        selector_rect = rect
+        show_local_status = not state.camera_visible
+        if show_local_status:
+            selector_rect = pygame.Rect(rect.x, rect.y, rect.width, rect.height - 34)
+            self._draw_beveled_panel(rect)
         self._draw_three_part_selector(
-            rect,
+            selector_rect,
             title="摄像画面",
             subtitle=subtitle,
             left_label="<",
@@ -409,6 +414,9 @@ class MainView:
             state=state,
             center_active=state.camera_enabled,
         )
+        if show_local_status:
+            status_rect = pygame.Rect(rect.x + 12, rect.bottom - 31, rect.width - 24, 24)
+            self._draw_status_ticker(status_rect, state)
 
     def _draw_three_part_selector(
         self,
@@ -499,16 +507,18 @@ class MainView:
         )
         top_rect = pygame.Rect(rect.x + 4, rect.y + 5, rect.width - 8, split_y - rect.y - 8)
         bottom_rect = pygame.Rect(rect.x + 4, split_y + 2, rect.width - 8, rect.bottom - split_y - 6)
-        top_font = self.font_button_big if arrow else self.font_display
-        if not arrow and self.font_display.size(label)[0] > top_rect.width - 8:
-            top_font = self.font_button_big
+        top_font = self.font_button_big if arrow else self.font_title
+        if not arrow and self.font_title.size(label)[0] > top_rect.width - 8:
+            top_font = self.font_value
+        if not arrow and top_font.size(label)[0] > top_rect.width - 8:
+            top_font = self.font_heading
         if arrow:
-            top_font = self.font_display
+            top_font = self.font_button_big
         self._center_text(label, top_font, TEXT if not disabled else MUTED, top_rect)
         if subtext:
-            sub_font = self.font_heading if arrow else self.font_body
-            if not arrow and self.font_heading.size(subtext)[0] <= bottom_rect.width - 10:
-                sub_font = self.font_heading
+            sub_font = self.font_body
+            if arrow and self.font_body.size(subtext)[0] > bottom_rect.width - 10:
+                sub_font = self.font_small
             self._center_text(subtext, sub_font, MUTED if not active else ACCENT_DARK, bottom_rect)
 
     def _draw_angle_touch_page(self, rect: pygame.Rect, state: DeviceState) -> None:
@@ -1325,14 +1335,14 @@ class MainView:
         samples = self._select_chart_samples(state)
         metrics_y = rect.y + 50
         metric_h = 38
-        zoom_h = 44
+        zoom_h = 34
         zoom_y = rect.bottom - zoom_h - 10
         plot_y = metrics_y + metric_h + 10
         plot = pygame.Rect(
             rect.x + 20,
             plot_y,
             rect.width - 40,
-            max(80, zoom_y - plot_y - 10),
+            max(80, zoom_y - plot_y - 28),
         )
         self._draw_chart_metrics(
             pygame.Rect(rect.x + 20, metrics_y, rect.width - 40, metric_h),
@@ -1354,9 +1364,7 @@ class MainView:
                 camera_viewport.width,
                 28,
             )
-        else:
-            status_rect = pygame.Rect(plot.x + 8, plot.bottom - 36, plot.width - 16, 28)
-        self._draw_status_ticker(status_rect, state)
+            self._draw_status_ticker(status_rect, state)
         self._draw_chart_zoom_buttons(
             pygame.Rect(rect.x + 20, zoom_y, rect.width - 40, zoom_h)
         )
@@ -1410,10 +1418,10 @@ class MainView:
 
     def _draw_chart_zoom_buttons(self, rect: pygame.Rect) -> None:
         actions = (
-            ("time_zoom_out", "时间－"),
-            ("time_zoom_in", "时间＋"),
-            ("voltage_zoom_out", "电压－"),
-            ("voltage_zoom_in", "电压＋"),
+            ("time_zoom_out", "时间轴－"),
+            ("time_zoom_in", "时间轴＋"),
+            ("voltage_zoom_out", "电压轴－"),
+            ("voltage_zoom_in", "电压轴＋"),
         )
         gap = 9
         button_w = (rect.width - gap * (len(actions) - 1)) // len(actions)
