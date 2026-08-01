@@ -34,14 +34,19 @@ XAUTHORITY_PATH="${UI_XAUTHORITY:-${SERVICE_USER_HOME}/.Xauthority}"
 DISPLAY_CANDIDATES="${UI_DISPLAY_CANDIDATES:-:0 :1 :2}"
 DISPLAY_WAIT_SECONDS="${UI_DISPLAY_WAIT_SECONDS:-90}"
 UI_EXTRA_ARGS="${UI_EXTRA_ARGS:-}"
+SERVICE_USER_UID="$(id -u "${SERVICE_USER}" 2>/dev/null || true)"
+if [[ -z "${SERVICE_USER_UID}" ]]; then
+    SERVICE_USER_UID="1000"
+fi
 
 export PYTHONUNBUFFERED="${PYTHONUNBUFFERED:-1}"
 export PYGAME_HIDE_SUPPORT_PROMPT="${PYGAME_HIDE_SUPPORT_PROMPT:-1}"
+export SDL_VIDEODRIVER="${SDL_VIDEODRIVER:-x11}"
 
 usage() {
     cat <<EOF
 Usage:
-  ${SCRIPT_PATH} [start|install|enable|restart|stop|disable|status|logs|uninstall]
+  ${SCRIPT_PATH} [start|install|enable|restart|stop|disable|status|logs|verify|uninstall]
 
 Commands:
   start      Start the hardware UI in the foreground. This is the default.
@@ -52,6 +57,7 @@ Commands:
   disable    Stop and disable boot autostart.
   status     Show systemd service status.
   logs       Follow systemd service logs.
+  verify     Print boot/service/display diagnostics.
   uninstall  Disable and remove the systemd service file.
 
 Useful environment overrides:
@@ -78,6 +84,7 @@ require_root() {
         "UI_DISPLAY_CANDIDATES=${DISPLAY_CANDIDATES}" \
         "UI_DISPLAY_WAIT_SECONDS=${DISPLAY_WAIT_SECONDS}" \
         "UI_EXTRA_ARGS=${UI_EXTRA_ARGS}" \
+        "SDL_VIDEODRIVER=${SDL_VIDEODRIVER}" \
         /bin/bash "${SCRIPT_PATH}" "${command_name}" "$@"
 }
 
@@ -220,14 +227,17 @@ write_service_file() {
     cat > "${SERVICE_PATH}" <<EOF
 [Unit]
 Description=Photoelectric Current Measurement UI (1024x600 fullscreen)
-After=display-manager.service graphical.target
+After=display-manager.service graphical.target systemd-user-sessions.service
 Wants=display-manager.service
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
 User=${SERVICE_USER}
 Group=${SERVICE_GROUP}
 WorkingDirectory=${PROJECT_DIR}
+Environment=HOME=${SERVICE_USER_HOME}
+Environment=XDG_RUNTIME_DIR=/run/user/${SERVICE_USER_UID}
 Environment=UICODE_PROJECT_DIR=${PROJECT_DIR}
 Environment=UI_SERVICE_USER=${SERVICE_USER}
 Environment=UI_SERVICE_GROUP=${SERVICE_GROUP}
@@ -235,13 +245,15 @@ Environment=UI_XAUTHORITY=${XAUTHORITY_PATH}
 Environment="UI_DISPLAY_CANDIDATES=${DISPLAY_CANDIDATES}"
 Environment=PYTHONUNBUFFERED=1
 Environment=PYGAME_HIDE_SUPPORT_PROMPT=1
+Environment=SDL_VIDEODRIVER=x11
 ExecStart=/bin/bash ${PROJECT_DIR}/UI/run_hardware_ui.sh start
-Restart=on-failure
+Restart=always
 RestartSec=5
 TimeoutStopSec=10
 
 [Install]
 WantedBy=graphical.target
+WantedBy=multi-user.target
 EOF
 
     systemctl daemon-reload
@@ -256,7 +268,9 @@ install_service() {
 enable_service() {
     require_root "enable" "$@"
     write_service_file
-    systemctl enable --now "${SERVICE_NAME}"
+    systemctl disable "${SERVICE_NAME}" >/dev/null 2>&1 || true
+    systemctl enable "${SERVICE_NAME}"
+    systemctl restart "${SERVICE_NAME}"
     echo "[UI] ${SERVICE_NAME} is enabled at boot and started now."
 }
 
@@ -281,6 +295,36 @@ logs_service() {
         exit 1
     fi
     journalctl -u "${SERVICE_NAME}" -f
+}
+
+verify_service() {
+    echo "[UI] Service name: ${SERVICE_NAME}"
+    echo "[UI] Service file: ${SERVICE_PATH}"
+    echo "[UI] Project dir:  ${PROJECT_DIR}"
+    echo "[UI] User:         ${SERVICE_USER}:${SERVICE_GROUP} uid=${SERVICE_USER_UID}"
+    echo "[UI] XAUTHORITY:   ${XAUTHORITY_PATH}"
+    echo "[UI] Candidates:   ${DISPLAY_CANDIDATES}"
+
+    if command -v systemctl >/dev/null 2>&1; then
+        echo "[UI] default target: $(systemctl get-default 2>/dev/null || echo unavailable)"
+        echo "[UI] is-enabled:    $(systemctl is-enabled "${SERVICE_NAME}" 2>/dev/null || true)"
+        echo "[UI] is-active:     $(systemctl is-active "${SERVICE_NAME}" 2>/dev/null || true)"
+        systemctl status "${SERVICE_NAME}" --no-pager -l || true
+    fi
+
+    echo "[UI] X sockets:"
+    ls -l /tmp/.X11-unix/ 2>/dev/null || true
+
+    if [[ -e "${XAUTHORITY_PATH}" ]]; then
+        ls -l "${XAUTHORITY_PATH}" || true
+    else
+        echo "[UI] ${XAUTHORITY_PATH} does not exist"
+    fi
+
+    if command -v journalctl >/dev/null 2>&1; then
+        echo "[UI] Recent logs:"
+        journalctl -u "${SERVICE_NAME}" -n 80 --no-pager || true
+    fi
 }
 
 uninstall_service() {
@@ -320,6 +364,9 @@ main() {
             ;;
         logs)
             logs_service
+            ;;
+        verify|doctor)
+            verify_service
             ;;
         uninstall|remove)
             uninstall_service "$@"

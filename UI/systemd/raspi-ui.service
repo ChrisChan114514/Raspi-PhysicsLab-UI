@@ -1,13 +1,16 @@
 [Unit]
 Description=Photoelectric Current Measurement UI (1024x600 fullscreen)
-After=display-manager.service graphical.target
+After=display-manager.service graphical.target systemd-user-sessions.service
 Wants=display-manager.service
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
 User=cc
 Group=cc
 WorkingDirectory=/home/cc/Desktop/UICode
+Environment=HOME=/home/cc
+Environment=XDG_RUNTIME_DIR=/run/user/1000
 Environment=UICODE_PROJECT_DIR=/home/cc/Desktop/UICode
 Environment=UI_SERVICE_USER=cc
 Environment=UI_SERVICE_GROUP=cc
@@ -15,10 +18,12 @@ Environment=UI_XAUTHORITY=/home/cc/.Xauthority
 Environment="UI_DISPLAY_CANDIDATES=:0 :1 :2"
 Environment=PYTHONUNBUFFERED=1
 Environment=PYGAME_HIDE_SUPPORT_PROMPT=1
+Environment=SDL_VIDEODRIVER=x11
 ExecStart=/bin/bash /home/cc/Desktop/UICode/UI/run_hardware_ui.sh start
-Restart=on-failure
+Restart=always
 RestartSec=5
 TimeoutStopSec=10
 
 [Install]
 WantedBy=graphical.target
+WantedBy=multi-user.target
