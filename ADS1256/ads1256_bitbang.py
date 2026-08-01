@@ -422,13 +422,29 @@ class ADS1256BitBang:
         buffer_enabled: bool,
         autocal_enabled: bool,
     ) -> Dict[str, int]:
+        return self.verify_mux_configuration(
+            mux=SINGLE_ENDED_MUX[channel],
+            pga=pga,
+            drate=drate,
+            buffer_enabled=buffer_enabled,
+            autocal_enabled=autocal_enabled,
+        )
+
+    def verify_mux_configuration(
+        self,
+        mux: int,
+        pga: int,
+        drate: int,
+        buffer_enabled: bool,
+        autocal_enabled: bool,
+    ) -> Dict[str, int]:
         registers = self.read_named_registers()
         expected_status_options = (0x02 if buffer_enabled else 0x00) | (
             0x04 if autocal_enabled else 0x00
         )
         expected = {
             "STATUS options": expected_status_options,
-            "MUX": SINGLE_ENDED_MUX[channel],
+            "MUX": mux & 0xFF,
             "ADCON SDCS/PGA": ADCON_SDCS_OFF | (pga & 0x07),
             "DRATE": drate,
         }
@@ -509,6 +525,13 @@ class ADS1256BitBang:
             autocal_enabled=autocal_enabled,
             selfcal=selfcal,
             timeout_s=timeout_s,
+        )
+        self.verify_mux_configuration(
+            mux=mux,
+            pga=pga,
+            drate=drate,
+            buffer_enabled=buffer_enabled,
+            autocal_enabled=autocal_enabled,
         )
 
     def configure_mux(
@@ -603,9 +626,9 @@ class ADS1256BitBang:
         self.transfer_byte(RDATA)
         self.delay_us(10)
         raw = (
-            (self.transfer_byte(0xFF) << 16)
-            | (self.transfer_byte(0xFF) << 8)
-            | self.transfer_byte(0xFF)
+            (self.transfer_byte(0x00) << 16)
+            | (self.transfer_byte(0x00) << 8)
+            | self.transfer_byte(0x00)
         )
         self.cs_high()
         return signed24_to_int(raw)

@@ -566,12 +566,15 @@ class ADS1256PhotocurrentSensor(PhotocurrentSensor):
             ADS1256ProtocolError,
             DRATE_30SPS,
             PGA_1,
+            raw_to_voltage,
         )
 
         self._vref_v = vref_v
         self._average = average
         self._pga = PGA_1
         self._drate = DRATE_30SPS
+        self._raw_to_voltage = raw_to_voltage
+        self._input_mode = "single_ain0_aincom"
         self._protocol_error = ADS1256ProtocolError
         self._configuration_verified = False
         self._configuration_warning = ""
@@ -598,16 +601,31 @@ class ADS1256PhotocurrentSensor(PhotocurrentSensor):
                 if all(value == 0x00 for value in values) or all(value == 0xFF for value in values):
                     raise self._protocol_error("ADS1256 did not return a valid register response")
 
-                self._adc.configure_single_ended(
-                    channel=0,
-                    pga=self._pga,
-                    drate=self._drate,
-                    buffer_enabled=False,
-                    autocal_enabled=False,
+                single_raws = self._configure_and_probe_input(
+                    "single_ain0_aincom",
                     selfcal=True,
                 )
-                for _ in range(3):
+                differential_raws: list[int] = []
+                try:
+                    differential_raws = self._configure_and_probe_input(
+                        "differential_ain0_ain1",
+                        selfcal=False,
+                    )
+                except (self._protocol_error, TimeoutError) as exc:
+                    print(f"[ADS1256 WARNING] differential AIN0-AIN1 probe skipped: {exc}", flush=True)
+
+                selected_mode = self._select_input_mode(single_raws, differential_raws)
+                self._configure_input_mode(selected_mode, selfcal=False)
+                self._input_mode = selected_mode
+                for _ in range(2):
                     self._adc.read_single_raw()
+                print(
+                    "[ADS1256 DATA] "
+                    f"single_ain0_aincom {self._format_probe_raws(single_raws)}; "
+                    f"differential_ain0_ain1 {self._format_probe_raws(differential_raws)}; "
+                    f"selected={selected_mode}",
+                    flush=True,
+                )
 
                 self._configuration_verified = True
                 self._configuration_warning = ""
@@ -623,6 +641,59 @@ class ADS1256PhotocurrentSensor(PhotocurrentSensor):
         detail = str(last_error) if last_error is not None else "unknown ADS1256 configuration error"
         self._configuration_warning = detail
         raise self._protocol_error(f"ADS1256 configuration/read check failed after 3 attempts: {detail}")
+
+    def _configure_input_mode(self, mode: str, selfcal: bool) -> None:
+        if mode == "differential_ain0_ain1":
+            self._adc.configure_differential(
+                positive_channel=0,
+                negative_channel=1,
+                pga=self._pga,
+                drate=self._drate,
+                buffer_enabled=False,
+                autocal_enabled=False,
+                selfcal=selfcal,
+            )
+            return
+        self._adc.configure_single_ended(
+            channel=0,
+            pga=self._pga,
+            drate=self._drate,
+            buffer_enabled=False,
+            autocal_enabled=False,
+            selfcal=selfcal,
+        )
+
+    def _configure_and_probe_input(self, mode: str, selfcal: bool) -> list[int]:
+        self._configure_input_mode(mode, selfcal=selfcal)
+        for _ in range(2):
+            self._adc.read_single_raw()
+        return [self._adc.read_single_raw() for _ in range(5)]
+
+    def _select_input_mode(self, single_raws: list[int], differential_raws: list[int]) -> str:
+        single_score = self._raw_score(single_raws)
+        differential_score = self._raw_score(differential_raws)
+        if single_score <= 16 and differential_score > 16:
+            return "differential_ain0_ain1"
+        if differential_score > max(100.0, single_score * 8.0):
+            return "differential_ain0_ain1"
+        return "single_ain0_aincom"
+
+    def _raw_score(self, raws: list[int]) -> float:
+        if not raws:
+            return 0.0
+        values = sorted(abs(raw) for raw in raws)
+        return float(values[len(values) // 2])
+
+    def _format_probe_raws(self, raws: list[int]) -> str:
+        if not raws:
+            return "raw=[] mV=[]"
+        mv_values = [
+            self._raw_to_voltage(raw, vref=self._vref_v, pga=self._pga) * 1000.0
+            for raw in raws
+        ]
+        raw_text = ",".join(str(raw) for raw in raws)
+        mv_text = ",".join(f"{value:+.3f}" for value in mv_values)
+        return f"raw=[{raw_text}] mV=[{mv_text}]"
 
     @property
     def configuration_verified(self) -> bool:
