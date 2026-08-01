@@ -1,6 +1,6 @@
 [Unit]
-Description=Photoelectric Current Experiment UI (1024x600 fullscreen)
-After=display-manager.service
+Description=Photoelectric Current Measurement UI (1024x600 fullscreen)
+After=display-manager.service graphical.target
 Wants=display-manager.service
 
 [Service]
@@ -8,9 +8,14 @@ Type=simple
 User=cc
 Group=cc
 WorkingDirectory=/home/cc/Desktop/UICode
-Environment=HOME=/home/cc
+Environment=UICODE_PROJECT_DIR=/home/cc/Desktop/UICode
+Environment=UI_SERVICE_USER=cc
+Environment=UI_SERVICE_GROUP=cc
+Environment=UI_XAUTHORITY=/home/cc/.Xauthority
+Environment="UI_DISPLAY_CANDIDATES=:0 :1 :2"
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/bin/bash /home/cc/Desktop/UICode/UI/run_hardware_ui.sh
+Environment=PYGAME_HIDE_SUPPORT_PROMPT=1
+ExecStart=/bin/bash /home/cc/Desktop/UICode/UI/run_hardware_ui.sh start
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=10
