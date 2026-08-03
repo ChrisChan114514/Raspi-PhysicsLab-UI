@@ -19,11 +19,11 @@ LAMP_NAMES = (
     "400nm紫外光",
     "450nm蓝光",
     "520nm绿光",
-    "红光",
+    "365nm紫外光",
     "红外光",
     "灯位6",
 )
-LAMP_SHORT_NAMES = ("400nm", "450nm", "520nm", "红光", "红外", "灯位6")
+LAMP_SHORT_NAMES = ("400nm", "450nm", "520nm", "365nm", "红外", "灯位6")
 UV_LAMP_INDEX = 0
 BLUE_LAMP_INDEX = 1
 GREEN_LAMP_INDEX = 2
