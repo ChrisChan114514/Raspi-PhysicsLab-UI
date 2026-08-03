@@ -82,6 +82,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--show-mouse", action="store_true")
     parser.add_argument("--hflip", action="store_true")
     parser.add_argument("--vflip", action="store_true")
+    parser.add_argument(
+        "--channel-order",
+        choices=("rgb", "bgr"),
+        default="rgb",
+        help="Color byte order returned by Picamera2 before drawing to pygame.",
+    )
     return parser.parse_args()
 
 
@@ -125,7 +131,7 @@ def open_camera(
     return camera
 
 
-def read_frame(camera: Picamera2) -> CameraFrame:
+def read_frame(camera: Picamera2, channel_order: str) -> CameraFrame:
     frame = camera.capture_array("main")
     if frame is None or frame.size == 0:
         raise RuntimeError("CSI camera returned an empty frame")
@@ -133,6 +139,8 @@ def read_frame(camera: Picamera2) -> CameraFrame:
     if len(frame.shape) != 3 or frame.shape[2] < 3:
         raise RuntimeError(f"unexpected camera frame shape: {frame.shape}")
     rgb = frame[:, :, :3]
+    if channel_order == "bgr":
+        rgb = rgb[:, :, ::-1]
     return CameraFrame(width=int(width), height=int(height), rgb_bytes=rgb.tobytes())
 
 
@@ -192,7 +200,8 @@ def run() -> int:
         print(
             f"[CSI CAMERA] opened index={args.camera_index} "
             f"camera={args.camera_size[0]}x{args.camera_size[1]} "
-            f"display={args.display} window={args.window_size[0]}x{args.window_size[1]}",
+            f"display={args.display} window={args.window_size[0]}x{args.window_size[1]} "
+            f"channel_order={args.channel_order}",
             flush=True,
         )
 
@@ -208,7 +217,7 @@ def run() -> int:
                 }:
                     running = False
 
-            frame = read_frame(camera)
+            frame = read_frame(camera, args.channel_order)
             measured_fps = clock.get_fps()
             draw_frame(screen, frame, font, measured_fps)
             clock.tick(args.fps)
