@@ -176,7 +176,7 @@ class MainView:
         status_bar = pygame.Rect(
             margin,
             height - margin - status_h,
-            width - margin * 2,
+            left_w,
             status_h,
         )
 

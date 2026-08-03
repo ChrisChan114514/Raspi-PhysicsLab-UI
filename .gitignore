@@ -33,6 +33,9 @@ dist/
 !.env.example
 *.local
 
+# Machine-specific calibration parameters
+42Motor/motor_config.json
+
 # IDE and local agent metadata
 .vscode/
 .idea/
