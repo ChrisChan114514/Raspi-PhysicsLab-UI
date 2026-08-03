@@ -114,6 +114,14 @@ class StepperMotor(ABC):
     def position_deg(self) -> float:
         return 0.0
 
+    @property
+    def calibration_offset_deg(self) -> float:
+        return 0.0
+
+    @property
+    def lamp_fine_tune_deg(self) -> tuple[float, ...]:
+        return (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+
     @abstractmethod
     def select_lamp(
         self,
@@ -133,6 +141,13 @@ class StepperMotor(ABC):
     def save_lamp_angle_offset(self, offset_deg: float) -> None:
         raise NotImplementedError
 
+    def save_calibration(
+        self,
+        calibration_offset_deg: float,
+        fine_tune_deg: tuple[float, ...] | None = None,
+    ) -> None:
+        raise NotImplementedError
+
     def stop(self) -> None:
         return None
 
@@ -145,10 +160,18 @@ class SimulatedStepperMotor(StepperMotor):
         self,
         lamp_angles_deg: tuple[float, ...],
         motor_config_path: Path,
+        calibration_offset_deg: float = 0.0,
+        lamp_fine_tune_deg: tuple[float, ...] = (),
     ) -> None:
         self._lamp_angles_deg = lamp_angles_deg
         self._position_deg = lamp_angles_deg[0]
         self._motor_config_path = motor_config_path
+        self._calibration_offset_deg = calibration_offset_deg
+        self._lamp_fine_tune_deg = (
+            lamp_fine_tune_deg
+            if len(lamp_fine_tune_deg) == 6
+            else (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        )
 
     @property
     def lamp_angles_deg(self) -> tuple[float, ...]:
@@ -157,6 +180,14 @@ class SimulatedStepperMotor(StepperMotor):
     @property
     def position_deg(self) -> float:
         return self._position_deg
+
+    @property
+    def calibration_offset_deg(self) -> float:
+        return self._calibration_offset_deg
+
+    @property
+    def lamp_fine_tune_deg(self) -> tuple[float, ...]:
+        return self._lamp_fine_tune_deg
 
     def select_lamp(
         self,
@@ -196,6 +227,24 @@ class SimulatedStepperMotor(StepperMotor):
 
         parameters = save_lamp_angle_offset(offset_deg, self._motor_config_path)
         self._lamp_angles_deg = parameters.lamp_angles_deg
+        self._calibration_offset_deg = parameters.calibration_offset_deg
+        self._lamp_fine_tune_deg = parameters.lamp_fine_tune_deg
+
+    def save_calibration(
+        self,
+        calibration_offset_deg: float,
+        fine_tune_deg: tuple[float, ...] | None = None,
+    ) -> None:
+        from motor_config import save_calibration  # noqa: PLC0415
+
+        parameters = save_calibration(
+            calibration_offset_deg,
+            fine_tune_deg,
+            self._motor_config_path,
+        )
+        self._lamp_angles_deg = parameters.lamp_angles_deg
+        self._calibration_offset_deg = parameters.calibration_offset_deg
+        self._lamp_fine_tune_deg = parameters.lamp_fine_tune_deg
 
 
 class EMMV5StepperMotor(StepperMotor):
@@ -213,7 +262,7 @@ class EMMV5StepperMotor(StepperMotor):
             raise FileNotFoundError(f"未找到 EMM 电机驱动：{driver_path}")
         sys.path.insert(0, str(motor_dir))
         from emm_v5 import EmmConfig, EmmV5Motor  # noqa: PLC0415
-        from motor_config import save_lamp_angle_offset  # noqa: PLC0415
+        from motor_config import save_calibration, save_lamp_angle_offset  # noqa: PLC0415
 
         config = EmmConfig(
             port=port,
@@ -225,12 +274,14 @@ class EMMV5StepperMotor(StepperMotor):
         self._motor = EmmV5Motor(config)
         self._motor_config_path = motor_dir / "motor_config.json"
         self._save_lamp_angle_offset = save_lamp_angle_offset
+        self._save_calibration = save_calibration
         self._lamp_angles_deg = self._motor.lamp_angles_deg
         version = self._motor.open()
+        params = self._motor.parameters
         print(
             f"[MOTOR] port={self._motor.port_name} "
             f"version={version.firmware:02X}/{version.hardware:02X} "
-            f"lamp_offset={self._motor.parameters.lamp_angle_offset_deg:+.3f} deg "
+            f"calibration_offset={params.calibration_offset_deg:+.3f} deg "
             f"position={self._motor.last_position_deg:.3f} deg",
             flush=True,
         )
@@ -242,6 +293,14 @@ class EMMV5StepperMotor(StepperMotor):
     @property
     def position_deg(self) -> float:
         return self._motor.last_position_deg
+
+    @property
+    def calibration_offset_deg(self) -> float:
+        return self._motor.parameters.calibration_offset_deg
+
+    @property
+    def lamp_fine_tune_deg(self) -> tuple[float, ...]:
+        return self._motor.parameters.lamp_fine_tune_deg
 
     def select_lamp(
         self,
@@ -279,7 +338,20 @@ class EMMV5StepperMotor(StepperMotor):
             offset_deg,
             self._motor_config_path,
         )
-        self._motor.set_lamp_angle_offset(parameters.lamp_angle_offset_deg)
+        self._motor.set_parameters(parameters)
+        self._lamp_angles_deg = parameters.lamp_angles_deg
+
+    def save_calibration(
+        self,
+        calibration_offset_deg: float,
+        fine_tune_deg: tuple[float, ...] | None = None,
+    ) -> None:
+        parameters = self._save_calibration(
+            calibration_offset_deg,
+            fine_tune_deg,
+            self._motor_config_path,
+        )
+        self._motor.set_parameters(parameters)
         self._lamp_angles_deg = parameters.lamp_angles_deg
 
     def stop(self) -> None:
@@ -864,6 +936,14 @@ class UnavailableStepperMotor(StepperMotor):
         del offset_deg
         raise RuntimeError(f"EMM 电机不可用：{self.reason}")
 
+    def save_calibration(
+        self,
+        calibration_offset_deg: float,
+        fine_tune_deg: tuple[float, ...] | None = None,
+    ) -> None:
+        del calibration_offset_deg, fine_tune_deg
+        raise RuntimeError(f"EMM 电机不可用：{self.reason}")
+
 
 class UnavailableLightController(LightController):
     def select_lamp(self, lamp_index: int) -> None:
@@ -1093,6 +1173,8 @@ def create_hardware(
         SimulatedStepperMotor(
             motor_parameters.lamp_angles_deg,
             motor_dir / "motor_config.json",
+            calibration_offset_deg=motor_parameters.calibration_offset_deg,
+            lamp_fine_tune_deg=motor_parameters.lamp_fine_tune_deg,
         ),
         SimulatedLightController(),
         SimulatedCameraSource(),

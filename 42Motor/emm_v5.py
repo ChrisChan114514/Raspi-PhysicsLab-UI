@@ -150,7 +150,18 @@ class EmmV5Motor:
         return self._lamp_angles_deg
 
     def set_lamp_angle_offset(self, offset_deg: float) -> None:
-        parameters = MotorParameters(lamp_angle_offset_deg=float(offset_deg))
+        """Legacy helper — sets calibration offset, zeroes fine‑tune."""
+        from motor_config import MotorParameters  # noqa: PLC0415
+
+        parameters = MotorParameters(
+            calibration_offset_deg=float(offset_deg),
+            lamp_fine_tune_deg=(0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+        )
+        self.parameters = parameters
+        self._lamp_angles_deg = parameters.lamp_angles_deg
+
+    def set_parameters(self, parameters: MotorParameters) -> None:
+        """Replace the entire motor parameter set in memory."""
         self.parameters = parameters
         self._lamp_angles_deg = parameters.lamp_angles_deg
 

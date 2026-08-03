@@ -14,6 +14,7 @@ from .state import (
     CONTROL_ITEMS,
     DEFAULT_LAMP_ANGLES_DEG,
     LAMP_NAMES,
+    LAMP_SHORT_NAMES,
     PWM_INPUT_MAX_PERCENT,
     PWM_INPUT_MIN_PERCENT,
     PWM_STEP_OPTIONS_PERCENT,
@@ -218,6 +219,56 @@ class ExperimentController:
             return
         self._save_motor_adjustment()
 
+    def enter_calibration_mode(self) -> None:
+        """进入校准模式：选择 400nm 校准灯进行基准校准。"""
+        if not self.hardware.device_available("emm"):
+            self.state.status = "EMM 电机自检未通过，无法校准"
+            return
+        if self.state.motor_moving:
+            self.state.status = "电机正在转动，请到位后再校准"
+            return
+        self.state.calibration_mode = True
+        self.state.lamp_index = 0  # 400 nm calibration lamp
+        self.state.motor_target_deg = self.state.lamp_angles_deg[0]
+        self.state.motor_adjustment_active = True
+        self._prepare_auto_camera()
+        self.state.motor_adjustment_input = self._format_angle(
+            self.state.motor_target_deg
+        )
+        self.state.motor_adjustment_error = ""
+        self.state.motor_adjustment_replace_input = True
+        self.state.status = (
+            "校准模式：请将 400nm 校准灯对准，然后保存偏移"
+        )
+
+    def exit_calibration_mode(self) -> None:
+        self.state.calibration_mode = False
+        self.close_angle_adjustment()
+
+    def enter_lamp_fine_tune(self) -> None:
+        """进入当前灯位的微调模式（非校准灯）。"""
+        if not self.hardware.device_available("emm"):
+            self.state.status = "EMM 电机自检未通过，无法微调"
+            return
+        if self.state.motor_moving:
+            self.state.status = "电机正在转动，请到位后再微调"
+            return
+        if self.state.lamp_index == 0:
+            # Lamp 0 uses calibration mode instead
+            self.enter_calibration_mode()
+            return
+        self.state.calibration_mode = False
+        self.state.motor_adjustment_active = True
+        self._prepare_auto_camera()
+        self.state.motor_adjustment_input = self._format_angle(
+            self.state.motor_target_deg
+        )
+        self.state.motor_adjustment_error = ""
+        self.state.motor_adjustment_replace_input = True
+        self.state.status = (
+            f"微调模式：{self.state.lamp_name}，调整后请保存偏移"
+        )
+
     def close_angle_adjustment(self) -> None:
         self._close_touch_input()
         if not self.state.motor_adjustment_active:
@@ -226,6 +277,7 @@ class ExperimentController:
         self.state.motor_adjustment_replace_input = True
         self.state.motor_adjustment_error = ""
         self.state.lamp_arrow_focus = 0
+        self.state.calibration_mode = False
         self.state.status = "角度调节已退出；未写入配置文件"
 
     def adjust_motor_angle_delta(self, delta_deg: float) -> None:
@@ -399,7 +451,10 @@ class ExperimentController:
         selected = self.state.selected_name
         if selected == "lamp":
             if self.state.lamp_arrow_focus == 0:
-                self.enter_motor_adjustment()
+                if self.state.lamp_index == 0:
+                    self.enter_calibration_mode()
+                else:
+                    self.enter_lamp_fine_tune()
             else:
                 self.select_lamp(self.state.lamp_index + self.state.lamp_arrow_focus)
                 self.state.lamp_arrow_focus = 0
@@ -598,15 +653,6 @@ class ExperimentController:
         if not ANGLE_INPUT_MIN_DEG <= target_angle_deg <= ANGLE_INPUT_MAX_DEG:
             self.state.motor_adjustment_error = "角度范围必须为 0~369.99°"
             return
-        offset_deg = (
-            target_angle_deg
-            - DEFAULT_LAMP_ANGLES_DEG[self.state.lamp_index]
-        )
-        self.state.lamp_angle_offset_deg = offset_deg
-        self.state.lamp_angles_deg = tuple(
-            base_angle + offset_deg
-            for base_angle in DEFAULT_LAMP_ANGLES_DEG
-        )
         self.state.motor_target_deg = target_angle_deg
         self.state.motor_moving = True
         self.state.motor_ready = False
@@ -622,19 +668,77 @@ class ExperimentController:
         )
 
     def _save_motor_adjustment(self) -> None:
-        try:
-            self._offset_saver(self.state.lamp_angle_offset_deg)
-        except Exception as exc:
-            self.state.motor_adjustment_error = f"保存失败：{exc}"
-            self.state.status = self.state.motor_adjustment_error
-            return
+        lamp_idx = self.state.lamp_index
+        if self.state.calibration_mode or lamp_idx == 0:
+            # ── calibration save: update calibration_offset_deg ─────
+            calibration = (
+                self.state.motor_target_deg
+                - DEFAULT_LAMP_ANGLES_DEG[0]
+            )
+            fine_tune = list(self.state.lamp_fine_tune_deg)
+            fine_tune[0] = 0.0  # calibration lamp has no relative offset
+            try:
+                self.hardware.stepper.save_calibration(
+                    calibration,
+                    tuple(fine_tune),
+                )
+            except Exception as exc:
+                self.state.motor_adjustment_error = f"保存失败：{exc}"
+                self.state.status = self.state.motor_adjustment_error
+                return
+            self.state.calibration_offset_deg = calibration
+            self.state.lamp_fine_tune_deg = tuple(fine_tune)
+            self.state.lamp_angles_deg = tuple(
+                calibration + base + fine
+                for base, fine in zip(
+                    DEFAULT_LAMP_ANGLES_DEG,
+                    self.state.lamp_fine_tune_deg,
+                )
+            )
+            self.state.lamp_angle_offset_deg = (
+                self.state.lamp_angles_deg[0] - DEFAULT_LAMP_ANGLES_DEG[0]
+            )
+            self.state.calibration_mode = False
+            self.state.status = (
+                f"已保存校准偏移：{calibration:+.3f}°"
+            )
+        else:
+            # ── per‑lamp fine‑tune save ─────────────────────────────
+            base_ref = (
+                self.state.calibration_offset_deg
+                + DEFAULT_LAMP_ANGLES_DEG[lamp_idx]
+            )
+            fine = self.state.motor_target_deg - base_ref
+            fine_tune = list(self.state.lamp_fine_tune_deg)
+            fine_tune[lamp_idx] = round(fine, 6)
+            try:
+                self.hardware.stepper.save_calibration(
+                    self.state.calibration_offset_deg,
+                    tuple(fine_tune),
+                )
+            except Exception as exc:
+                self.state.motor_adjustment_error = f"保存失败：{exc}"
+                self.state.status = self.state.motor_adjustment_error
+                return
+            self.state.lamp_fine_tune_deg = tuple(fine_tune)
+            self.state.lamp_angles_deg = tuple(
+                self.state.calibration_offset_deg + base + ft
+                for base, ft in zip(
+                    DEFAULT_LAMP_ANGLES_DEG,
+                    self.state.lamp_fine_tune_deg,
+                )
+            )
+            self.state.lamp_angle_offset_deg = (
+                self.state.lamp_angles_deg[0] - DEFAULT_LAMP_ANGLES_DEG[0]
+            )
+            self.state.status = (
+                f"已保存 {LAMP_SHORT_NAMES[lamp_idx]} 微调：{fine:+.3f}°"
+            )
+
         self.state.motor_adjustment_active = False
         self.state.motor_adjustment_replace_input = True
         self.state.motor_adjustment_error = ""
         self.state.lamp_arrow_focus = 0
-        self.state.status = (
-            f"已保存装配偏移：{self.state.lamp_angle_offset_deg:+.3f}°"
-        )
 
     def _prepare_auto_camera(self) -> None:
         if not self.hardware.device_available("camera"):

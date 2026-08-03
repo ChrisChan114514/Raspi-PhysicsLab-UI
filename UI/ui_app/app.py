@@ -133,7 +133,10 @@ def _dispatch_touch_action(
     elif action == "lamp_next":
         controller.select_next_lamp()
     elif action == "open_angle_page":
-        controller.enter_motor_adjustment()
+        if state.lamp_index == 0:
+            controller.enter_calibration_mode()
+        else:
+            controller.enter_lamp_fine_tune()
     elif action == "open_angle_input":
         controller.begin_angle_input()
     elif action == "angle_delta":
@@ -282,7 +285,11 @@ def run_app(config: AppConfig) -> int:
             self_test_summary,
         )
 
-        state = DeviceState(lamp_angles_deg=hardware.stepper.lamp_angles_deg)
+        state = DeviceState(
+            lamp_angles_deg=hardware.stepper.lamp_angles_deg,
+            calibration_offset_deg=hardware.stepper.calibration_offset_deg,
+            lamp_fine_tune_deg=hardware.stepper.lamp_fine_tune_deg,
+        )
         state.motor_position_deg = hardware.stepper.position_deg
         nearest_lamp = min(
             range(len(state.lamp_angles_deg)),

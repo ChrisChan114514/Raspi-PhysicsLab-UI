@@ -41,6 +41,7 @@ PWM_LAMP_INDICES = frozenset(
     )
 )
 DEFAULT_LAMP_ANGLES_DEG = (0.0, 60.0, 120.0, 180.0, 240.0, 300.0)
+CALIBRATION_LAMP_INDEX = UV_LAMP_INDEX  # 400 nm
 
 
 @dataclass
@@ -51,9 +52,23 @@ class SamplePoint:
     source_voltage_mv: float = 0.0
 
 
+def _compute_lamp_angles(
+    calibration_offset_deg: float,
+    fine_tune_deg: tuple[float, ...],
+) -> tuple[float, ...]:
+    return tuple(
+        calibration_offset_deg + base + fine
+        for base, fine in zip(DEFAULT_LAMP_ANGLES_DEG, fine_tune_deg)
+    )
+
+
 @dataclass
 class DeviceState:
     lamp_angles_deg: tuple[float, ...] = DEFAULT_LAMP_ANGLES_DEG
+    calibration_offset_deg: float = 0.0
+    lamp_fine_tune_deg: tuple[float, ...] = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    calibration_mode: bool = False
+    calibration_lamp_index: int = CALIBRATION_LAMP_INDEX
     selected_control: int = 0
     lamp_arrow_focus: int = 0
     lamp_index: int = 0
@@ -94,6 +109,16 @@ class DeviceState:
     started_at_s: float = field(default_factory=monotonic)
 
     def __post_init__(self) -> None:
+        # Recompute lamp_angles_deg from calibration + fine‑tune if
+        # the caller only supplied the raw parameters.
+        if (
+            self.calibration_offset_deg != 0.0
+            or any(v != 0.0 for v in self.lamp_fine_tune_deg)
+        ):
+            self.lamp_angles_deg = _compute_lamp_angles(
+                self.calibration_offset_deg,
+                self.lamp_fine_tune_deg,
+            )
         self.lamp_angle_offset_deg = (
             self.lamp_angles_deg[0] - DEFAULT_LAMP_ANGLES_DEG[0]
         )

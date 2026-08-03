@@ -160,10 +160,11 @@ class MainView:
         width, height = self.screen.get_size()
         margin = 10
         header_h = 66
+        status_h = 32
         gap = 10
         header = pygame.Rect(margin, 10, width - margin * 2, header_h)
         content_y = header.bottom + gap
-        content_h = height - margin - content_y
+        content_h = height - margin - status_h - gap * 2 - content_y
         left_w = 370
         controls = pygame.Rect(margin, content_y, left_w, content_h)
         chart = pygame.Rect(
@@ -172,10 +173,17 @@ class MainView:
             width - controls.right - gap - margin,
             content_h,
         )
+        status_bar = pygame.Rect(
+            margin,
+            height - margin - status_h,
+            width - margin * 2,
+            status_h,
+        )
 
         self._draw_header(header, state)
         self._draw_touch_controls(controls, state)
         self._draw_chart(chart, state)
+        self._draw_status_ticker(status_bar, state)
         if state.touch_input_active:
             self._draw_numeric_overlay(state)
         pygame.display.flip()
@@ -339,7 +347,11 @@ class MainView:
     def _draw_lamp_selector_card(self, rect: pygame.Rect, state: DeviceState) -> None:
         subtitle = "转动中" if state.motor_moving else "已到位" if state.motor_ready else "待定位"
         center_title = LAMP_SHORT_NAMES[state.lamp_index]
-        center_subtitle = f"{state.motor_target_deg:.2f}°"
+        fine_tune = state.lamp_fine_tune_deg[state.lamp_index]
+        if fine_tune != 0.0:
+            center_subtitle = f"{state.motor_target_deg:.2f}° 微调{fine_tune:+.2f}"
+        else:
+            center_subtitle = f"{state.motor_target_deg:.2f}°"
         self._draw_three_part_selector(
             rect,
             title="灯位转盘",
@@ -396,13 +408,8 @@ class MainView:
             subtitle = "连接中"
         else:
             subtitle = "待机"
-        selector_rect = rect
-        show_local_status = not state.camera_visible
-        if show_local_status:
-            selector_rect = pygame.Rect(rect.x, rect.y, rect.width, rect.height - 34)
-            self._draw_beveled_panel(rect)
         self._draw_three_part_selector(
-            selector_rect,
+            rect,
             title="摄像画面",
             subtitle=subtitle,
             left_label="<",
@@ -417,9 +424,6 @@ class MainView:
             state=state,
             center_active=state.camera_enabled,
         )
-        if show_local_status:
-            status_rect = pygame.Rect(rect.x + 12, rect.bottom - 31, rect.width - 24, 24)
-            self._draw_status_ticker(status_rect, state)
 
     def _draw_three_part_selector(
         self,
@@ -527,13 +531,26 @@ class MainView:
     def _draw_angle_touch_page(self, rect: pygame.Rect, state: DeviceState) -> None:
         self._draw_beveled_panel(rect)
         inner = rect.inflate(-14, -14)
-        self._text("转盘角度控制", self.font_heading, TEXT, inner.x + 6, inner.y + 5)
+
+        # ── title line ──────────────────────────────────────────────
+        if state.calibration_mode:
+            mode_title = "★ 校准模式：400nm 基准灯"
+            title_color = WARN
+        elif state.lamp_index == 0:
+            mode_title = "转盘角度控制 · 基准灯 (校准)"
+            title_color = ACCENT
+        else:
+            mode_title = "转盘角度控制 · 微调"
+            title_color = TEXT
+        self._text(mode_title, self.font_heading, title_color, inner.x + 6, inner.y + 5)
+
+        # ── lamp / target info ──────────────────────────────────────
         self._text(
             f"{LAMP_SHORT_NAMES[state.lamp_index]}  目标 {state.motor_target_deg:.2f}°",
             self.font_body,
             ACCENT_DARK,
             inner.x + 6,
-            inner.y + 40,
+            inner.y + 42,
             max_width=inner.width - 12,
         )
         position_text = "电机转动中" if state.motor_moving else f"当前 {state.motor_position_deg:.2f}°"
@@ -546,9 +563,29 @@ class MainView:
             max_width=inner.width - 12,
         )
 
-        row_top = inner.y + 102
-        row_gap = 12
-        row_h = 66
+        # ── calibration / fine‑tune info line ───────────────────────
+        if state.lamp_index == 0:
+            info_line = (
+                f"校准基准偏移：{state.calibration_offset_deg:+.3f}°"
+            )
+        else:
+            fine_val = state.lamp_fine_tune_deg[state.lamp_index]
+            info_line = (
+                f"校准基准：{state.calibration_offset_deg:+.3f}°  |  "
+                f"本灯微调：{fine_val:+.3f}°"
+            )
+        self._text(
+            info_line,
+            self.font_small,
+            MUTED,
+            inner.x + 6,
+            inner.y + 88,
+            max_width=inner.width - 12,
+        )
+
+        row_top = inner.y + 112
+        row_gap = 10
+        row_h = 60
         for index, step in enumerate(ANGLE_FINE_STEPS_DEG):
             row = pygame.Rect(inner.x + 6, row_top + index * (row_h + row_gap), inner.width - 12, row_h)
             minus_rect = pygame.Rect(row.x, row.y, 96, row.height)
@@ -562,15 +599,16 @@ class MainView:
                 self._add_touch_region("angle_delta", minus_rect, -step)
                 self._add_touch_region("angle_delta", plus_rect, step)
 
-        bottom_h = 58
+        bottom_h = 52
         gap = 8
-        manual_rect = pygame.Rect(inner.x + 6, inner.bottom - bottom_h, 126, bottom_h)
+        manual_rect = pygame.Rect(inner.x + 6, inner.bottom - bottom_h, 120, bottom_h)
         save_rect = pygame.Rect(manual_rect.right + gap, manual_rect.y, 116, bottom_h)
         back_rect = pygame.Rect(save_rect.right + gap, manual_rect.y, inner.right - save_rect.right - gap - 6, bottom_h)
         self._draw_touch_button(manual_rect, "手动输入", "矩阵键盘", active=True, accent=ACCENT)
+        save_label = "保存校准" if (state.calibration_mode or state.lamp_index == 0) else "保存微调"
         self._draw_touch_button(
             save_rect,
-            "保存偏移",
+            save_label,
             "写入配置",
             disabled=state.motor_moving,
             accent=ACCENT,
@@ -1360,14 +1398,7 @@ class MainView:
         )
 
         if state.camera_visible and state.camera_view_mode == "small":
-            camera_viewport = self._draw_camera_thumbnail(plot, state)
-            status_rect = pygame.Rect(
-                camera_viewport.x,
-                min(camera_viewport.bottom + 6, plot.bottom - 32),
-                camera_viewport.width,
-                28,
-            )
-            self._draw_status_ticker(status_rect, state)
+            self._draw_camera_thumbnail(plot, state)
         self._draw_chart_zoom_buttons(
             pygame.Rect(rect.x + 20, zoom_y, rect.width - 40, zoom_h)
         )
@@ -1498,8 +1529,6 @@ class MainView:
             overlay.y + 10,
             max_width=overlay.width - 28,
         )
-        status_rect = pygame.Rect(viewport.x, viewport.bottom + 8, viewport.width, 30)
-        self._draw_status_ticker(status_rect, state)
 
     def _draw_camera_thumbnail(
         self,
