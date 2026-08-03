@@ -252,7 +252,7 @@ python 16Button/read_keypad.py --print-idle  # 显示空闲扫描
 
 ## ADS1256
 
-`ADS1256/ads1256_bitbang.py` 使用 `lgpio` 软件 SPI。当前固定接线：
+旧版 `ADS1256/Old_GPIO_Driver/ads1256_bitbang.py` 使用 `lgpio` 软件 SPI。当前固定接线：
 
 | ADS1256 |        Raspberry Pi |
 | ------- | ------------------: |
@@ -270,7 +270,7 @@ LED4/LED5/LED6，BCM18 保持未分配。模拟输入仍为 `AIN0-AIN7`。
 连接检查：
 
 ```bash
-/usr/bin/python3 /home/cc/Desktop/UICode/ADS1256/check_connection.py \
+/usr/bin/python3 /home/cc/Desktop/UICode/ADS1256/Old_GPIO_Driver/check_connection.py \
   --skip-reset
 ```
 
@@ -281,8 +281,8 @@ DOUT 和 SPI 时序；DRDY 始终不低时检查供电、晶振和 DRDY 接线�
 监控 `AIN0 - AINCOM`：
 
 ```bash
-/usr/bin/python3 /home/cc/Desktop/UICode/ADS1256/monitor_in0.py
-/usr/bin/python3 /home/cc/Desktop/UICode/ADS1256/scan_channels.py
+/usr/bin/python3 /home/cc/Desktop/UICode/ADS1256/Old_GPIO_Driver/monitor_in0.py
+/usr/bin/python3 /home/cc/Desktop/UICode/ADS1256/Old_GPIO_Driver/scan_channels.py
 ```
 
 监控默认使用 2.5 V 参考、PGA 1、30 SPS 和 3 点中值。可用 `--vref 5.0`、
@@ -460,7 +460,8 @@ pygame 主线程
 16Button/matrix_keypad.py       矩阵键盘扫描与消抖
 42Motor/emm_v5.py               EMM V5.0 串口协议
 42Motor/motor_config.json       六灯位装配偏移
-ADS1256/ads1256_bitbang.py      ADS1256 软件 SPI 驱动
+ADS1256/stm32_parallel_bridge.py        STM32 并行桥 ADS1256 驱动
+ADS1256/Old_GPIO_Driver/ads1256_bitbang.py  旧版树莓派软件 SPI 驱动
 LED/led_pwm.py                  六路灯 PWM 驱动
 USBCamara/usb_camera.py         MF500 V4L2 驱动
 UI/app.py                       启动入口和命令行参数

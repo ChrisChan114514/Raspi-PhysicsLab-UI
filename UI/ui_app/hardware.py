@@ -652,13 +652,14 @@ class ADS1256PhotocurrentSensor(PhotocurrentSensor):
         vref_v: float = 2.5,
         average: int = 3,
     ) -> None:
-        driver_path = ads1256_dir / "ads1256_bitbang.py"
+        old_driver_dir = ads1256_dir / "Old_GPIO_Driver"
+        driver_path = old_driver_dir / "ads1256_bitbang.py"
         if not driver_path.is_file():
             raise FileNotFoundError(
                 f"未找到 ADS1256 驱动：{driver_path}。"
                 "请确认已将 ADS1256 目录完整传到 /home/cc/Desktop/UICode/ADS1256。"
             )
-        sys.path.insert(0, str(ads1256_dir))
+        sys.path.insert(0, str(old_driver_dir))
         from ads1256_bitbang import (  # noqa: PLC0415
             ADS1256BitBang,
             ADS1256Pins,

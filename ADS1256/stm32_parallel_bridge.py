@@ -22,8 +22,6 @@ from typing import Iterable, List, Optional
 
 import lgpio
 
-from ads1256_bitbang import ADS1256Pins
-
 
 CMD_GET_SAMPLE = 0x01
 REQUEST_LEN = 8
@@ -31,6 +29,15 @@ RESPONSE_LEN = 17
 STATUS_VALID_SAMPLE = 0x01
 STATUS_UNSUPPORTED_CMD = 0x40
 STATUS_BAD_REQUEST = 0x80
+
+# Reuse the Raspberry Pi pins that previously went directly to ADS1256.
+# BCM23/24/25/16/20/21 correspond to the old SCLK/DIN/DOUT/DRDY/CS/RST lines.
+OLD_ADS_SCLK_BCM = 23
+OLD_ADS_DIN_BCM = 24
+OLD_ADS_DOUT_BCM = 25
+OLD_ADS_DRDY_BCM = 16
+OLD_ADS_CS_BCM = 20
+OLD_ADS_RST_BCM = 21
 
 
 class STM32ParallelProtocolError(RuntimeError):
@@ -48,14 +55,13 @@ class STM32ParallelPins:
 
     @classmethod
     def from_ads1256_defaults(cls) -> "STM32ParallelPins":
-        ads = ADS1256Pins.from_wiringpi_defaults()
         return cls(
-            req=ads.sclk,
-            ready=ads.drdy,
-            pi_tx0=ads.din,
-            pi_tx1=ads.dout,
-            stm_tx0=ads.cs,
-            stm_tx1=ads.rst,
+            req=OLD_ADS_SCLK_BCM,
+            ready=OLD_ADS_DRDY_BCM,
+            pi_tx0=OLD_ADS_DIN_BCM,
+            pi_tx1=OLD_ADS_DOUT_BCM,
+            stm_tx0=OLD_ADS_CS_BCM,
+            stm_tx1=OLD_ADS_RST_BCM,
         )
 
     @property

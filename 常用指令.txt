@@ -77,4 +77,4 @@ DISPLAY=:0 XAUTHORITY=/home/cc/.Xauthority \
 单独监控 IN0（必须先退出 UI）：
 cd /home/cc/Desktop/UICode
 source .venv/bin/activate
-/usr/bin/python3 /home/cc/Desktop/UICode/ADS1256/monitor_in0.py
+/usr/bin/python3 /home/cc/Desktop/UICode/ADS1256/Old_GPIO_Driver/monitor_in0.py
