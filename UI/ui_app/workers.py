@@ -188,7 +188,7 @@ class CameraPollerThread:
         self._stop_event = threading.Event()
         self._thread = threading.Thread(
             target=self._run,
-            name="usb-camera-poller",
+            name="csi-camera-poller",
             daemon=True,
         )
 

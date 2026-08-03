@@ -39,14 +39,12 @@ sudo systemctl start raspi-ui.service
 DISPLAY=:0 XAUTHORITY=/home/cc/.Xauthority \
 /home/cc/Desktop/UICode/.venv/bin/python /home/cc/Desktop/UICode/UI/app.py --backend hardware --debug-led
 
-检查并测试 USB 摄像头（必须先退出或停止 UI）：
-v4l2-ctl --list-devices
-ls -l /dev/video*
+检查并测试 CSI 软排线摄像头（必须先退出或停止 UI）：
 sudo systemctl stop raspi-ui.service
-/home/cc/Desktop/UICode/.venv/bin/python /home/cc/Desktop/UICode/USBCamara/test_usb_camera.py --frames 30 --debug
+/home/cc/Desktop/UICode/.venv/bin/python /home/cc/Desktop/UICode/CSICamera/test_csi_camera_display0.py --display :0 --channel-order bgr
 sudo systemctl start raspi-ui.service
 
-调试 USB 摄像头：
+调试 CSI 软排线摄像头：
 DISPLAY=:0 XAUTHORITY=/home/cc/.Xauthority \
 /home/cc/Desktop/UICode/.venv/bin/python /home/cc/Desktop/UICode/UI/app.py --backend hardware --debug-camera
 

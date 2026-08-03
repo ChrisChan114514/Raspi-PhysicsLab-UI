@@ -1,4 +1,5 @@
 pygame-ce>=2.5
 numpy>=2.1
-opencv-python-headless>=4.10
 pyserial>=3.5
+# CSI camera support comes from Raspberry Pi OS:
+# sudo apt install -y python3-picamera2

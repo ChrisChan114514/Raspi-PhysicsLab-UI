@@ -124,7 +124,7 @@ ensure_python_env() {
 
     VENV_PYTHON="${VENV_DIR}/bin/python"
 
-    if ! "${VENV_PYTHON}" -c "import pygame, numpy, cv2, serial" >/dev/null 2>&1; then
+    if ! "${VENV_PYTHON}" -c "import pygame, numpy, serial" >/dev/null 2>&1; then
         echo "[UI] Installing Python dependencies from ${REQUIREMENTS_FILE}"
         if ! "${VENV_PYTHON}" -m pip install -r "${REQUIREMENTS_FILE}"; then
             echo "[UI] Python dependency installation failed" >&2
@@ -136,6 +136,13 @@ ensure_python_env() {
         echo "[UI] Raspberry Pi lgpio module is not available." >&2
         echo "[UI] Install the system package, then retry:" >&2
         echo "[UI]   sudo apt install -y python3-lgpio" >&2
+        exit 1
+    fi
+
+    if ! "${VENV_PYTHON}" -c "import picamera2" >/dev/null 2>&1; then
+        echo "[UI] Raspberry Pi Picamera2 module is not available." >&2
+        echo "[UI] Install the system package, then retry:" >&2
+        echo "[UI]   sudo apt install -y python3-picamera2" >&2
         exit 1
     fi
 }

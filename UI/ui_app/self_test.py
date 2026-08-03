@@ -24,7 +24,7 @@ def startup_self_test_items() -> list[SelfTestItem]:
         SelfTestItem("emm", "EMM 灯组转轮电机"),
         SelfTestItem("keypad", "4x4 矩阵键盘"),
         SelfTestItem("leds", "六路 LED PWM"),
-        SelfTestItem("camera", "MF500 USB 摄像头"),
+        SelfTestItem("camera", "CSI 软排线摄像头"),
     ]
 
 

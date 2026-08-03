@@ -119,3 +119,7 @@ bash UI/run_hardware_ui.sh disable
 #### 0.31.22
 
 其他没有什么问题，就是我拍黄色的人脸，怎么是蓝色的啊，蓝色的鼠标垫拍成黄色，是不是色彩的驱动处理有问题
+
+#### 0.31.23
+
+的确是色彩线序做错了，应该使用 `python3 CSICamera/test_csi_camera_display0.py --display :0 --channel-order bgr` 这个就是没问题了；然后现在就是做一个CSI驱动适配于UI主程序，现在的UI程序放弃MF500 USB 摄像机的驱动，改为CSI的驱动

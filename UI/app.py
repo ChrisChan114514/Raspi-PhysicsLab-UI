@@ -41,7 +41,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--debug-camera",
         action="store_true",
-        help="在终端打印 USB 摄像头连接和帧错误",
+        help="在终端打印 CSI 摄像头连接和帧错误",
     )
     parser.add_argument(
         "--motor-port",
@@ -78,27 +78,34 @@ def parse_args() -> argparse.Namespace:
         help="六路灯组驱动输入均为低电平有效",
     )
     parser.add_argument(
-        "--camera-device",
-        default=None,
-        help="可选 MF500 节点；即使指定路径也会严格验证设备名称",
+        "--camera-index",
+        type=int,
+        default=0,
+        help="CSI 摄像头编号，默认 0",
     )
     parser.add_argument(
         "--camera-width",
         type=int,
         default=640,
-        help="USB 摄像头请求宽度，默认 640",
+        help="CSI 摄像头请求宽度，默认 640",
     )
     parser.add_argument(
         "--camera-height",
         type=int,
         default=480,
-        help="USB 摄像头请求高度，默认 480",
+        help="CSI 摄像头请求高度，默认 480",
     )
     parser.add_argument(
         "--camera-fps",
         type=float,
         default=15.0,
-        help="USB 摄像头采集帧率，默认 15",
+        help="CSI 摄像头采集帧率，默认 15",
+    )
+    parser.add_argument(
+        "--camera-channel-order",
+        choices=("rgb", "bgr"),
+        default="bgr",
+        help="CSI 摄像头帧通道顺序，默认 bgr",
     )
     return parser.parse_args()
 
@@ -119,10 +126,11 @@ def main() -> int:
         motor_pulses_per_revolution=args.motor_pulses_per_revolution,
         led_pwm_frequency_hz=args.led_pwm_frequency,
         led_active_low=args.led_active_low,
-        camera_device=args.camera_device,
+        camera_index=args.camera_index,
         camera_width=args.camera_width,
         camera_height=args.camera_height,
         camera_fps=args.camera_fps,
+        camera_channel_order=args.camera_channel_order,
     )
     return run_app(config)
 

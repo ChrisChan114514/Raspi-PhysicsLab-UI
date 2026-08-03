@@ -467,45 +467,46 @@ class SimulatedCameraSource(CameraSource):
         )
 
 
-class OpenCVUSBCameraSource(CameraSource):
+class Picamera2CSICameraSource(CameraSource):
     def __init__(
         self,
         camera_dir: Path,
-        device: str | None = None,
+        camera_index: int = 0,
         width: int = 640,
         height: int = 480,
         fps: float = 15.0,
+        channel_order: str = "bgr",
         debug: bool = False,
     ) -> None:
-        driver_path = camera_dir / "usb_camera.py"
+        driver_path = camera_dir / "csi_camera.py"
         if not driver_path.is_file():
-            raise FileNotFoundError(f"未找到 USB 摄像头驱动：{driver_path}")
+            raise FileNotFoundError(f"未找到 CSI 摄像头驱动：{driver_path}")
         sys.path.insert(0, str(camera_dir))
-        from usb_camera import (  # noqa: PLC0415
-            USBCamera,
-            USBCameraConfig,
-            USBCameraError,
+        from csi_camera import (  # noqa: PLC0415
+            CSICamera,
+            CSICameraConfig,
+            CSICameraError,
         )
 
-        self._camera = USBCamera(
-            USBCameraConfig(
-                device=device,
+        self._camera = CSICamera(
+            CSICameraConfig(
+                camera_index=camera_index,
                 width=width,
                 height=height,
                 fps=fps,
+                channel_order=channel_order,
                 debug=debug,
             )
         )
-        self._camera_error = USBCameraError
+        self._camera_error = CSICameraError
 
     def read(self) -> CameraReading:
         try:
             if self._camera.is_open:
                 frame = self._camera.read()
             else:
-                # Open and capture in the poller thread. Some V4L2/OpenCV
-                # builds do not behave reliably when opened in one thread and
-                # read continuously from another.
+                # Open and capture in the poller thread so Picamera2 ownership
+                # stays in the same worker that reads frames continuously.
                 frame = self._camera.open()
         except self._camera_error:
             self._camera.close()
@@ -880,7 +881,7 @@ class UnavailableCameraSource(CameraSource):
         self.reason = reason
 
     def read(self) -> CameraReading:
-        raise RuntimeError(f"USB 摄像头不可用：{self.reason}")
+        raise RuntimeError(f"CSI 摄像头不可用：{self.reason}")
 
 
 class UnavailablePhotocurrentSensor(PhotocurrentSensor):
@@ -941,10 +942,11 @@ def create_hardware(
     motor_pulses_per_revolution: int = 3200,
     led_pwm_frequency_hz: float = 1000.0,
     led_active_low: bool = False,
-    camera_device: str | None = None,
+    camera_index: int = 0,
     camera_width: int = 640,
     camera_height: int = 480,
     camera_fps: float = 15.0,
+    camera_channel_order: str = "bgr",
     debug_sensor: bool = False,
     debug_motor: bool = False,
     debug_led: bool = False,
@@ -1034,12 +1036,13 @@ def create_hardware(
         camera: CameraSource | None = None
         report("camera", "running", "枚举设备并读取首帧")
         try:
-            camera = OpenCVUSBCameraSource(
+            camera = Picamera2CSICameraSource(
                 camera_dir=camera_dir,
-                device=camera_device,
+                camera_index=camera_index,
                 width=camera_width,
                 height=camera_height,
                 fps=camera_fps,
+                channel_order=camera_channel_order,
                 debug=debug_camera,
             )
             frame = camera.read()

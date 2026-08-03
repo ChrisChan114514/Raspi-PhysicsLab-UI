@@ -23,10 +23,11 @@ class AppConfig:
     motor_pulses_per_revolution: int = 3200
     led_pwm_frequency_hz: float = 1000.0
     led_active_low: bool = False
-    camera_device: str | None = None
+    camera_index: int = 0
     camera_width: int = 640
     camera_height: int = 480
     camera_fps: float = 15.0
+    camera_channel_order: str = "bgr"
     self_test_step_delay_s: float = 0.12
     self_test_result_delay_s: float = 1.0
     self_test_failure_delay_s: float = 2.5
@@ -53,4 +54,4 @@ class AppConfig:
 
     @property
     def camera_dir(self) -> Path:
-        return self.project_root / "USBCamara"
+        return self.project_root / "CSICamera"

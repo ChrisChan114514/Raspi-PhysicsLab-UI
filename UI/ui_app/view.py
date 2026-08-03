@@ -42,7 +42,7 @@ BUTTON_BOTTOM = (147, 186, 235)
 CONTROL_LABELS = {
     "lamp": "灯组转轮",
     "intensity": "照明光强",
-    "camera": "USB实时摄像",
+    "camera": "CSI实时摄像",
 }
 
 KEY_GUIDES = (
@@ -1458,9 +1458,9 @@ class MainView:
 
     def _draw_camera(self, rect: pygame.Rect, state: DeviceState) -> None:
         self._draw_beveled_panel(rect)
-        self._text("USB实时摄像", self.font_heading, TEXT, rect.x + 16, rect.y + 13)
+        self._text("CSI实时摄像", self.font_heading, TEXT, rect.x + 16, rect.y + 13)
 
-        status_text = "USB CAMERA · LIVE" if state.camera_ready else "USB CAMERA"
+        status_text = "CSI CAMERA · LIVE" if state.camera_ready else "CSI CAMERA"
         status_color = ACCENT if state.camera_ready else WARN
         status_surface = self.font_small.render(status_text, True, status_color)
         self.screen.blit(
@@ -1527,7 +1527,7 @@ class MainView:
             4,
         )
         self._text(
-            "MF500 · LIVE" if state.camera_ready else "MF500 · CONNECTING",
+            "CSI · LIVE" if state.camera_ready else "CSI · CONNECTING",
             self.font_small,
             TEXT,
             status_bar.x + 23,

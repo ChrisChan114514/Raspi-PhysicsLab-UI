@@ -468,7 +468,7 @@ class ExperimentController:
                 "camera",
                 "设备不可用",
             )
-            self.state.status = "USB 摄像头自检未通过，摄像功能不可用"
+            self.state.status = "CSI 摄像头自检未通过，摄像功能不可用"
             return
         self.state.camera_enabled = bool(enabled)
         self.state.camera_ready = False
@@ -477,11 +477,11 @@ class ExperimentController:
         self.state.camera_frame_at_s = 0.0
         self.state.camera_error = ""
         if self.state.camera_enabled:
-            self.state.status = f"USB摄像已开启：{self.state.camera_view_name}"
+            self.state.status = f"CSI摄像已开启：{self.state.camera_view_name}"
         elif self.state.camera_auto_visible:
             self.state.status = "常驻摄像已关闭，电机调节期间自动显示"
         else:
-            self.state.status = "USB摄像已关闭"
+            self.state.status = "CSI摄像已关闭"
 
     def set_camera_view_mode(self, mode: str) -> None:
         if mode not in CAMERA_VIEW_MODES:

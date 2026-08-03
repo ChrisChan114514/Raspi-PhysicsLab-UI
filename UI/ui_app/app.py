@@ -248,10 +248,11 @@ def run_app(config: AppConfig) -> int:
             motor_pulses_per_revolution=config.motor_pulses_per_revolution,
             led_pwm_frequency_hz=config.led_pwm_frequency_hz,
             led_active_low=config.led_active_low,
-            camera_device=config.camera_device,
+            camera_index=config.camera_index,
             camera_width=config.camera_width,
             camera_height=config.camera_height,
             camera_fps=config.camera_fps,
+            camera_channel_order=config.camera_channel_order,
             debug_sensor=config.debug_sensor,
             debug_motor=config.debug_motor,
             debug_led=config.debug_led,
@@ -328,7 +329,7 @@ def run_app(config: AppConfig) -> int:
                 "emm": "EMM 电机",
                 "keypad": "矩阵键盘",
                 "leds": "LED PWM",
-                "camera": "USB 摄像头",
+                "camera": "CSI 摄像头",
             }
             unavailable = "、".join(
                 failure_names.get(key, key)

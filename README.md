@@ -6,7 +6,7 @@ R
 
 程序固定使用 `1024x600` 全屏界面，通过 4x4 矩阵键盘完成现场操作。进入
 UI 后立即开始 ADS1256 电压测量，自动把六灯位转轮定位到 400 nm 紫外光，并在
-实际到位后以 `100%` 占空比点亮对应灯。MF500 USB 摄像头支持曲线左上小窗
+实际到位后以 `100%` 占空比点亮对应灯。CSI 软排线摄像头支持曲线左上小窗
 和右栏全屏两种画幅；转轮运动和手动调节期间会按用户最后选择的画幅自动
 显示，电压采样继续在后台运行。
 
@@ -21,7 +21,7 @@ UI 后立即开始 ADS1256 电压测量，自动把六灯位转轮定位到 400 
 |-- Font           # UI 内置字体
 |-- LED            # 六路灯 PWM 驱动
 |-- UI             # pygame 主程序
-|-- USBCamara      # MF500 USB 摄像头驱动
+|-- CSICamera      # CSI 软排线摄像头驱动
 |-- README.md
 `-- 常用指令.txt
 ```
@@ -31,11 +31,11 @@ UI 后立即开始 ADS1256 电压测量，自动把六灯位转轮定位到 400 
 
 ## 安装
 
-安装系统依赖，并创建可读取系统 GPIO/OpenCV 包的虚拟环境：
+安装系统依赖，并创建可读取系统 GPIO/Picamera2 包的虚拟环境：
 
 ```bash
 sudo apt update
-sudo apt install -y python3-venv python3-lgpio python3-opencv v4l-utils
+sudo apt install -y python3-venv python3-lgpio python3-picamera2
 cd /home/cc/Desktop/UICode
 python3 -m venv --system-site-packages .venv
 source .venv/bin/activate
@@ -81,7 +81,8 @@ DISPLAY=:0 XAUTHORITY=/home/cc/.Xauthority \
 --debug-led           输出六路灯 PWM 状态
 --debug-camera        输出摄像头连接和首帧状态
 --motor-port PATH     覆盖默认电机串口 /dev/serial0
---camera-device PATH  固定一个通过 MF500 名称校验的 /dev/video* 节点
+--camera-index N       CSI 摄像头编号，默认 0
+--camera-channel-order rgb|bgr  CSI 帧通道顺序，默认 bgr
 ```
 
 ## 启动自检
@@ -94,7 +95,7 @@ UI 建立 HDMI/SDL 显示后会自动播放开机自检，再进入实验主界�
 3. EMM 电机：检查串口版本、使能状态和当前位置应答。
 4. 4x4 矩阵键盘：申请 8 路 GPIO 并执行一次完整矩阵扫描。
 5. 六路 LED PWM：申请全部输出 GPIO，并确认保持熄灭状态。
-6. MF500 USB 摄像头：严格校验设备名称并实际读取首帧。
+6. CSI 软排线摄像头：通过 Picamera2 打开摄像头并实际读取首帧。
 
 矩阵键盘是无主动应答能力的被动开关矩阵；无人按键时，自检只能确认 GPIO
 和扫描逻辑正常，不能判断每个物理触点是否导通。全部正常时结果页显示 1 秒；
@@ -114,7 +115,7 @@ UI 建立 HDMI/SDL 显示后会自动播放开机自检，再进入实验主界�
 | `2`       | 选择上一个参数；手动角度模块中输入数字`2`              |
 | `8`       | 选择下一个参数；手动角度模块中输入数字`8`              |
 | `4`       | 灯组焦点左移；光强减小；摄像选择小窗；手动模块输入`4`  |
-| `5`       | 开关常驻 USB 摄像；手动角度模块中输入数字`5`           |
+| `5`       | 开关常驻 CSI 摄像；手动角度模块中输入数字`5`           |
 | `6`       | 灯组焦点右移；光强增加；摄像选择全屏；手动模块输入`6`  |
 | `A`       | 确认灯组焦点；摄像开关；手动角度模块中确认输入并开始转动 |
 | `B`       | 光强增加 5%；手动角度模块中不执行动作                    |
@@ -132,7 +133,7 @@ UI 建立 HDMI/SDL 显示后会自动播放开机自检，再进入实验主界�
 启动脚本 `UI/run_hardware_ui.sh` 会等待图形桌面和 `.Xauthority` 最多
 60 秒，再激活虚拟环境并以硬件模式运行 UI。如果 `.venv` 不存在，脚本会
 优先使用 `/usr/bin/python3` 创建 `--system-site-packages` 环境，并自动安装
-`UI/requirements.txt`；环境存在但缺少 pygame、NumPy、OpenCV 或 pyserial
+`UI/requirements.txt`；环境存在但缺少 pygame、NumPy 或 pyserial
 时也会自动补装。先手动验证：
 
 ```bash
@@ -165,8 +166,8 @@ service 通过 `/bin/bash` 调用启动脚本，因此脚本不依赖可执行�
 ## GPIO 总览
 
 硬件模式使用 `22` 个唯一 BCM GPIO：ADS1256 使用 6 个，矩阵键盘使用
-8 个，六路灯 PWM 使用 6 个，EMM 电机 GPIO UART 使用 2 个。USB 摄像头
-使用 USB 总线，不占用 40Pin GPIO。目前模块间没有重复占用。
+8 个，六路灯 PWM 使用 6 个，EMM 电机 GPIO UART 使用 2 个。CSI 摄像头
+使用软排线接口，不占用 40Pin GPIO。目前模块间没有重复占用。
 
 - `WiringPi` 是项目原始接线编号。
 - `BCM` 是 `lgpio` 和树莓派系统使用的 GPIO 编号。
@@ -320,7 +321,7 @@ DOUT 和 SPI 时序；DRDY 始终不低时检查供电、晶振和 DRDY 接线�
 校验通过后才提交目标并开始转动。超过范围的数字不会写入输入框，`D` 可清空
 输入，`#` 将换算后的统一装配偏移写入 `motor_config.json` 并退出。例如蓝光
 灯位输入 `81.22°` 并按 `A` 后会转动，保存时写入偏移 `+21.22°`。调节界面
-只占左栏，右栏继续显示光电流曲线或 MF500 画面。
+只占左栏，右栏继续显示光电流曲线或 CSI 画面。
 
 驱动核心 API：
 
@@ -386,44 +387,33 @@ sudo systemctl start raspi-ui.service
 增加 `--active-low`。正常结束或 `Ctrl+C`
 中断都会恢复熄灯电平。
 
-## MF500 USB 摄像头
+## CSI 软排线摄像头
 
-`USBCamara/usb_camera.py` 使用 OpenCV V4L2 后端，只允许产品名严格等于
-`MF500 camera` 的设备。无法读取 USB 产品名时，V4L2 节点名称也必须完全
-相同；其他摄像头即使位于 `/dev/video0` 也不会被打开。
-
-默认从 `/sys/class/video4linux/video*` 自动发现设备，请求 `640x480`、
-`15 FPS` 和 MJPEG。确认设备：
-
-```bash
-v4l2-ctl --list-devices
-ls -l /dev/video*
-for name in /sys/class/video4linux/video*/name; do \
-  printf '%s: ' "${name%/name}"; cat "$name"; \
-done
-```
+`CSICamera/csi_camera.py` 使用 Raspberry Pi OS 的 Picamera2/libcamera 后端。
+主 UI 默认打开 `camera_index=0`，请求 `640x480`、`15 FPS`，并按已经验证
+正常的 `bgr` 通道顺序转换为 UI 需要的 RGB 画面。
 
 独立测试：
 
 ```bash
 sudo systemctl stop raspi-ui.service
 /home/cc/Desktop/UICode/.venv/bin/python \
-  /home/cc/Desktop/UICode/USBCamara/test_usb_camera.py --frames 30 --debug
+  /home/cc/Desktop/UICode/CSICamera/test_csi_camera_display0.py \
+  --display :0 --channel-order bgr
 sudo systemctl start raspi-ui.service
 ```
 
-同一台设备可能暴露多个 video 节点。可用 `--device /dev/video2` 固定测试
-节点，或用 UI 的 `--camera-device /dev/video2` 固定运行节点，但路径参数不能
-绕过名称校验。`--camera-width`、`--camera-height` 和 `--camera-fps` 可调整
-采集参数。
+主 UI 可用 `--camera-index`、`--camera-width`、`--camera-height`、
+`--camera-fps` 和 `--camera-channel-order rgb|bgr` 调整采集参数。当前默认
+`--camera-channel-order bgr`，因为实测黄色/蓝色互换时该设置可以恢复正常色彩。
 
-摄像头默认开启并使用“小窗”模式。左侧第三个控制项为“USB实时摄像”：用
+摄像头默认开启并使用“小窗”模式。左侧第三个控制项为“CSI实时摄像”：用
 `4` 选择小窗、`6` 选择全屏，按 `A` 开关摄像；无论当前选择哪个控制项，
 都可用 `5` 快速开关。小窗位于光电流曲线绘图区左上四分之一区域，可同时
 观察实验现象和电压变化；全屏模式占用整个右侧区域。关闭摄像后采集线程会
-释放设备，重新开启时自动连接名称严格匹配的 MF500。即使用户关闭了常驻
-摄像，转轮换灯和手动角度调节期间也会临时自动采集并显示；自动显示沿用用户
-最后一次选择的小窗/全屏画幅，不修改用户开关或画幅偏好，调节结束后恢复。
+释放设备，重新开启时自动连接 CSI 摄像头。即使用户关闭了常驻摄像，转轮换灯
+和手动角度调节期间也会临时自动采集并显示；自动显示沿用用户最后一次选择的
+小窗/全屏画幅，不修改用户开关或画幅偏好，调节结束后恢复。
 
 ## 光电流数据与 FFT
 
@@ -463,7 +453,7 @@ pygame 主线程
 ADS1256/stm32_parallel_bridge.py        STM32 并行桥 ADS1256 驱动
 ADS1256/Old_GPIO_Driver/ads1256_bitbang.py  旧版树莓派软件 SPI 驱动
 LED/led_pwm.py                  六路灯 PWM 驱动
-USBCamara/usb_camera.py         MF500 V4L2 驱动
+CSICamera/csi_camera.py         CSI Picamera2 驱动
 UI/app.py                       启动入口和命令行参数
 UI/ui_app/config.py             1024x600 配置和路径
 UI/ui_app/analysis.py           尖峰门限、FIR/IIR 和 FFT
