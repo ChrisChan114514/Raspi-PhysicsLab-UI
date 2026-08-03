@@ -162,22 +162,27 @@ class MainView:
         header_h = 66
         status_h = 32
         gap = 10
+        left_w = 370
         header = pygame.Rect(margin, 10, width - margin * 2, header_h)
         content_y = header.bottom + gap
-        content_h = height - margin - status_h - gap * 2 - content_y
-        left_w = 370
-        controls = pygame.Rect(margin, content_y, left_w, content_h)
-        chart = pygame.Rect(
-            controls.right + gap,
-            content_y,
-            width - controls.right - gap - margin,
-            content_h,
-        )
+
         status_bar = pygame.Rect(
             margin,
             height - margin - status_h,
             left_w,
             status_h,
+        )
+        controls = pygame.Rect(
+            margin,
+            content_y,
+            left_w,
+            status_bar.top - gap - content_y,
+        )
+        chart = pygame.Rect(
+            controls.right + gap,
+            content_y,
+            width - controls.right - gap - margin,
+            height - margin - content_y,
         )
 
         self._draw_header(header, state)
